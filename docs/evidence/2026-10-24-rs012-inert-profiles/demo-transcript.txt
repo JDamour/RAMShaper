@@ -1,0 +1,46 @@
+# RS-012 live demo — ramshaper-cli config export/import (debug build)
+# Date: 2026-10-24; release rebuild deferred (AT-06 soak holds ramshaper-cli.exe)
+
+$ target/debug/ramshaper-cli config export demo-exported.toml
+exported validated configuration to docs/evidence/2026-10-24-rs012-inert-profiles/demo-exported.toml
+exit=0
+
+$ cat demo-exported.toml
+schema_version = 1
+mode = "observe_only"
+
+[watch]
+interval_ms = 1000
+retention_ms = 900000
+
+[agent]
+
+[cohort]
+declared = "none"
+
+[profiles]
+active = "balanced"
+
+[exclusions]
+
+$ custom source with inert profile + exclusions:
+schema_version = 1
+[watch]
+interval_ms = 2500
+[profiles]
+active = "low_ram"
+[exclusions]
+processes = ["obs64.exe", "Audacity.exe"]
+
+$ target/debug/ramshaper-cli config export --config demo-custom-source.toml demo-custom-exported.toml
+exported validated configuration to docs/evidence/2026-10-24-rs012-inert-profiles/demo-custom-exported.toml
+exit=0
+
+$ target/debug/ramshaper-cli config import demo-custom-exported.toml --into demo-imported.toml
+imported validated configuration into docs/evidence/2026-10-24-rs012-inert-profiles/demo-imported.toml (mode: observe_only, profile: low_ram)
+exit=0
+
+$ rejected import (unknown profile) — source with active = "turbo":
+error: docs/evidence/2026-10-24-rs012-inert-profiles/demo-invalid-source.toml is not a valid configuration: unsupported profile 'turbo'; valid profiles: balanced, low_ram, focus, gaming_observe, custom
+exit=2
+ls: cannot access 'docs/evidence/2026-10-24-rs012-inert-profiles/demo-should-not-exist.toml': No such file or directory

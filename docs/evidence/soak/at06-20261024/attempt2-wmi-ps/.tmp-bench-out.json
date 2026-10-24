@@ -1,0 +1,39 @@
+{
+  "schema": "ramshaper.observer_overhead.v1",
+  "measured_at_utc": "2026-10-24T11:54:47.319Z",
+  "tool": "ramshaper-bench 0.1.0",
+  "iterations": 500,
+  "system_snapshot": {
+    "samples": 500,
+    "min_ms": 0.0764,
+    "p50_ms": 0.161,
+    "p95_ms": 0.3148,
+    "max_ms": 1.8236
+  },
+  "process_scan": {
+    "samples": 500,
+    "min_ms": 22.0186,
+    "p50_ms": 34.181400000000004,
+    "p95_ms": 40.1707,
+    "max_ms": 92.4174
+  },
+  "process_count_last": 428,
+  "bench_self_working_set_bytes": 5140480,
+  "bench_self_private_commit_bytes": 1392640,
+  "os": {
+    "product_name": "Windows 10 Pro",
+    "version": "10.0.26200.9711",
+    "build": 26200,
+    "ubr": 9711,
+    "display_version": "25H2",
+    "arch": "x86_64",
+    "source": "RtlGetVersion;GetNativeSystemInfo;HKLM CurrentVersion"
+  },
+  "cohort": {
+    "declared": "none",
+    "measured": "none",
+    "total_physical_bytes": 68448034816,
+    "status": "baseline"
+  },
+  "note": "machine-local observer-overhead measurement; non-cohort baseline, not a cohort claim"
+}

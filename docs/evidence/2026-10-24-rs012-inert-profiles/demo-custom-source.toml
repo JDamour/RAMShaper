@@ -1,0 +1,7 @@
+schema_version = 1
+[watch]
+interval_ms = 2500
+[profiles]
+active = "low_ram"
+[exclusions]
+processes = ["obs64.exe", "Audacity.exe"]

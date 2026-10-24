@@ -1,0 +1,23 @@
+[package]
+name = "ramshaper-agent"
+description = "RAMShaper session agent: read-only monitor over a session-scoped named pipe (protocol v1)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "ramshaper-agent"
+path = "src/main.rs"
+
+[dependencies]
+ramshaper-core = { workspace = true }
+ramshaper-platform = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+ramshaper-windows = { workspace = true }
+
+[lints]
+workspace = true

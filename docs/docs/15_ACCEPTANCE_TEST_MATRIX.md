@@ -1,0 +1,63 @@
+# RAMShaper — Acceptance and Evidence Matrix
+
+**Revision:** 0.2 • **Date:** 2026-10-22 • **Execution status:** AT-01–AT-05 **Passed** 2026-10-23; AT-06 (deterministic portion), AT-07, AT-08 (core/config portion) **Passed** 2026-10-24; the 24-hour soak of AT-06 and all later cases are **Not run** — except AT-21, whose declared-cohort **measurements** remain Not run while the observe-only **cohort classification** (config schema, report stamping, no-better-machine substitution guard) was implemented, fixture-tested and live-verified on the non-cohort baseline path 2026-10-24; the RS-012 portions of AT-08 (inert profiles/exclusions, schema-validated atomic import/export) were implemented, tested and demoed 2026-10-24; and the AT-19 **automated portion** (UIA tree present, keyboard activation, stale-state text legibility) was recorded 2026-10-24 with the AT-19 interactive pass (Narrator/DPI matrix) Not run; the AT-17 same-session adversarial portion (malformed framing, replay characterization, oversized prefixes and response cap, version mismatch before dispatch — over a real pipe, bounded memory throughout) was completed 2026-10-24, with cross-session/remote peers Not run locally under the documented same-user limitation; and the AT-23 G2-applicable offline/privacy boundary review (no network capability compiled into host binaries, identity-free config exports, no installer/registration surface) was recorded 2026-10-24. See [16_IMPLEMENTATION_EVIDENCE.md](16_IMPLEMENTATION_EVIDENCE.md).
+
+These are test specifications, not automated tests or results. Deterministic fake adapters/clocks cover the decision logic; actual Windows API, permissions, process lifetime and accessibility claims require real Windows evidence. No missing hardware cohort is counted as passed.
+
+## Acceptance cases
+
+| ID | Requirement / tickets | Given / When / Then | Evidence |
+|---|---|---|---|
+| AT-01 | P0-01; RS-001,004 | Given a clean checkout and standard-user Windows session, when building the first CLI, then format/lint/unit checks and binary launch succeed without service installation or UAC | Commands, exit codes, toolchain and OS build |
+| AT-02 | P0-01; RS-002,005 | Given fixed page counts/page size, when converting counters, then byte values are exact; overflow, zero page size and impossible totals yield errors, never wrapped or invented values | Boundary fixtures and independent raw API capture |
+| AT-03 | P0-01; RS-003 | Given an exited process and PID reused by another creation identity, when any delayed operation/recovery runs, then the replacement receives zero writes | Fake reuse trace; Windows exit/restart probe |
+| AT-04 | P0-01; RS-002,005,006 | Given a denied or failed API query, when requesting text/JSON, then unavailable reason, source and partial/error exit code are visible and zero is not substituted | CLI output and error fixtures |
+| AT-05 | P0-01; RS-006 | Given low-memory watch, when starting/stopping 1,000 times or cancelling while signaled, then handles return to baseline and no event spin loop/catch-up burst occurs | Windows handle/CPU trace; cancellation result |
+| AT-06 | P0-01; RS-007,008 | Given process churn, topology change, counter reset and a full queue, when sampling, then identity-safe rates reset, capacity stays bounded and gaps/truncation are exposed | 24-hour soak + deterministic counter fixtures |
+| AT-07 | P0-01; RS-009,019 | Given the pressure_v1 transition sequences, including missing samples, when replaying twice, then states/evidence match exactly, never emit Critical and never create policy authority | Versioned fixture and deterministic decisions |
+| AT-08 | P0-02; RS-012,030 | Given fresh install, import, profile selection or restart, when settings load, then mode remains Observe Only, unsupported schema/fields are rejected and no OS setting changes | Config fixtures and OS call audit |
+| AT-09 | P0-02/03; RS-015,016,030 | Given expired consent, wrong instance, new identity, new config, foreground/unknown or excluded target, when confirming, then no mutation occurs; denial states why | Eligibility table including unknown audio/security classification |
+| AT-10 | P0-03; RS-016,031 | Given one eligible Normal-priority synthetic leaf process, when a valid 120 s action is confirmed, then durable Prepared precedes exactly one Below Normal write, verification and deadline; replay does not extend it | Journal ordering + API trace |
+| AT-11 | P0-02/03; RS-017,018 | Given an active action, when focus/TTL/disable/stale input/lock/suspend/exit triggers restoration, then no new apply is accepted and restoration is verified within the 2 s target while responsive; misses/errors remain visible | Fake-clock and real foreground/session tests |
+| AT-12 | P0-03; RS-017,031 | Given crashes before/after each journal commit and OS call, when restarting, then current values reconcile, never reapply, never affect reused PIDs and remain Observe Only | Fault-injection matrix with each crash point |
+| AT-13 | P0-03; RS-017,031 | Given another tool changed the property, or restore loses access, when reverting, then external value is preserved or pending recovery is shown; retries are bounded and all-restored is withheld | Conflict/denial/read-back failure fixtures |
+| AT-14 | P0-03; RS-018,019 | Given noisy events, repeat confirmations or a child-spawning target, when evaluating, then one-action cap and cooldown hold; unapproved descendants receive no explicit write, parent restores and incompatibility is recorded | Sequence trace and child inheritance probe |
+| AT-15 | P0-04; RS-020,021 | Given supported and nested-job fixtures, when managed creation fails or the launcher crashes at each stage, then no RAMShaper-created suspended orphan, forced kill or automatic duplicate launch occurs | Actual Windows lifecycle trace; failure blocks capability |
+| AT-16 | P0-04; RS-022,023 | Given a managed group, when UI/agent exits or monitoring is removed, then the app remains alive, no kill/hard/time/process-count limits are configured, and UI never promises detachment or sandboxing | Queried job flags, child membership and process lifetime |
+| AT-17 | P0-02/03; RS-026,030 | Given wrong user/session, remote client, oversized/malformed request, replay or version mismatch, when connecting/dispatching, then request is rejected with bounded memory and no OS mutation | IPC adversarial tests; documented same-user limitation |
+| AT-18 | P0-02; RS-008,026,031 | Given disk-full, corrupt/newer schema, quota reached or clear-history during an active action, when recording/deleting, then new policy applies stop and recovery intent is preserved; restoration is still attempted where its original state is readable and observation remains available | Storage fault tests, deletion/export inspection |
+| AT-19 | P0-01/02; RS-010–013 | Given stale/unavailable data and pending restore, when navigating at 1366×768 and 100/125/150/200% DPI using keyboard and Narrator, then units, focus, status and recovery are understandable without color alone | UI test checklist and running-app captures (interactive checklist prepared 2026-10-24: [design/2026-10-24-at19-interactive-checklist.md](../design/2026-10-24-at19-interactive-checklist.md)) |
+| AT-20 | P0-05; RS-024 | Given fixed synthetic trials with missing values and known quantiles, when analyzing, then per-run p95, units, sample counts, paired intervals and result labels match independently calculated values | Fixture calculations; no claim of real benefit |
+| AT-21 | NFR-01; RS-025 | Given each declared hardware cohort, when measuring agent absent/observe and UI hidden/visible separately, then overhead distribution and target status are published without substituting a better machine | Machine manifest and raw observer data |
+| AT-22 | P0-05; RS-024,029 | Given three preregistered workload classes, when a second operator reruns, then baseline/treatment, regression, missing-value and negative outcomes remain reproducible | Scripts, checksums, raw data and reports |
+| AT-23 | NFR-02; RS-026,027 | Given clean install, normal use, export and uninstall, when inspecting files/network/processes, then no hidden upload/update request occurs, default exports redact identities and unresolved recovery is disclosed | Offline/network capture and uninstall report |
+
+## Milestone gates
+
+Non-functional traceability: NFR-01 → AT-21; NFR-02 → AT-18/AT-23; NFR-03 → AT-05–AT-07; NFR-04 → AT-19; NFR-05 → AT-03/AT-10–AT-18; NFR-06 → AT-01/AT-04/AT-17. Functional P0 traceability is recorded in each case above.
+
+| Gate | Required cases | Additional exit condition |
+|---|---|---|
+| G0 First CLI | AT-01–AT-05 | Windows evidence bundle; no policy/launch endpoints |
+| G1 Observation | G0 + AT-06–AT-07, AT-08 core/config portion, AT-21 | Bounded 24-hour collector; measured support matrix; no dependency on Slint/profile widgets |
+| G2 UI | G1 + AT-08 UI portion, AT-17–AT-19, AT-23 as applicable to read-only UI | Slint license/accessibility decision; policy UI disabled |
+| G3 Policy alpha | G2 + AT-09–AT-14, AT-18, AT-20–AT-21, AT-23 | Synthetic workload A/B report; eligibility allowlist; all recovery failures inspectable |
+| G4 Managed beta | G3 + AT-15–AT-16 | Launcher compatibility matrix; no fallback to suspended-create without a revised safety decision |
+| G5 Evidence/public release | All applicable cases + AT-22 | License/signing/provenance decisions, contributor docs and honest claims review |
+
+Applicability exclusions must be written and justified by absent functionality, never used to waive an implemented safety path. A failed gate blocks that release slice; it does not require abandoning read-only work.
+
+## Evidence record template
+
+```text
+Case / requirement / ticket:
+Status: Not run | Passed | Failed | Blocked
+Date, operator, code revision (or source hash), documentation revision:
+OS edition/build, hardware, privileges, toolchain:
+Command or manual procedure:
+Expected / actual / exit code:
+Artifacts and SHA-256:
+Limitations, missing cohorts, next action:
+```
+
+No application test commands have been run as part of documentation revision 0.2.

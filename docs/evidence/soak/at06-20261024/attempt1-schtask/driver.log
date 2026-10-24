@@ -1,0 +1,3 @@
+2026-10-24T11:21:23Z soak start; planned end 2026-10-25T11:21:23Z; tick=600s; iterations=500
+2026-10-24T11:21:25Z watch started pid=24764
+2026-10-24T11:21:37Z window=0 ok scan_p50=19.766 scan_p95=26.803 snap_p50=0.062 procs=442 bench_ws=4923392 watch_ws=4960256

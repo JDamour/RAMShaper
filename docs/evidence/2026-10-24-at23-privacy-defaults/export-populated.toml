@@ -1,0 +1,18 @@
+schema_version = 1
+mode = "observe_only"
+
+[watch]
+interval_ms = 2000
+retention_ms = 900000
+
+[agent]
+pipe_name = "my-custom-pipe"
+
+[cohort]
+declared = "none"
+
+[profiles]
+active = "balanced"
+
+[exclusions]
+processes = ["vendor-tool.exe"]

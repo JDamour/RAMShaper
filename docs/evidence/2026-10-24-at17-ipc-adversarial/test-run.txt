@@ -1,0 +1,39 @@
+AT-17 adversarial IPC test run - 2026-10-24T15:54:58Z
+command: cargo test -p ramshaper-agent --test ipc --locked
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.55s
+     Running tests\ipc.rs (target\debug\deps\ipc-2368f3603f65b37a.exe)
+
+running 13 tests
+test request_envelope_roundtrip_via_ipc_module ... ok
+test get_processes_rejects_wrong_version_before_any_scan ... ok
+test capabilities_over_real_pipe ... ok
+test list_actions_is_empty_and_honest ... ok
+test malformed_framing_prefix_ends_the_connection_silently ... ok
+test malformed_frame_gets_one_error_then_close ... ok
+test oversized_frame_prefix_is_rejected_without_allocation ... ok
+test replayed_request_is_served_identically_on_the_same_connection ... ok
+test unknown_command_is_unsupported ... ok
+test version_mismatch_is_rejected_before_dispatch ... ok
+test snapshot_over_real_pipe_carries_metrics_and_pressure ... ok
+test get_processes_serves_a_real_inventory_with_warming_then_real_rates ... ok
+test subscribe_streams_snapshots_until_peer_leaves ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.57s
+
+
+command: cargo test -p ramshaper-core --locked (ipc tests)
+
+test ipc::tests::frame_roundtrip ... ok
+test ipc::tests::oversized_prefix_is_rejected_before_allocation ... ok
+test ipc::tests::request_envelope_parses_and_rejects_shapes ... ok
+test ipc::tests::response_frame_respects_cap ... ok
+test ipc::tests::response_shape_matches_contract ... ok
+test ipc::tests::retryability_follows_the_contract ... ok
+test ipc::tests::snapshot_delivery_carries_gap_marker ... ok
+test ipc::tests::zero_length_prefix_is_malformed ... ok
+test ipc::tests::response_frame_rejects_payload_over_cap ... ok
+test result: ok. 110 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+gates: cargo fmt --check clean; cargo clippy -p ramshaper-agent -p ramshaper-core --all-targets --locked -- -D warnings clean

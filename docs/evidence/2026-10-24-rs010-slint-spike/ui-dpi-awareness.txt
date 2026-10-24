@@ -1,0 +1,1 @@
+﻿DPI awareness: PER_MONITOR_AWARE (v2 capable)

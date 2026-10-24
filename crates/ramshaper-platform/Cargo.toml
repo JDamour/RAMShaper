@@ -1,0 +1,13 @@
+[package]
+name = "ramshaper-platform"
+description = "RAMShaper read-only platform adapter contracts and deterministic fakes (no OS calls)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ramshaper-core = { workspace = true }
+
+[lints]
+workspace = true

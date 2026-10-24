@@ -1,0 +1,134 @@
+﻿=== PHASE 1 (background query, 3 s settle) ===
+PASS1 window: name='RAMShaper' type=ControlType.Window
+window diagnostics: framework='Slint' isControl=True isContent=True serverSide=1 providerDesc=1
+  ControlType.Text name='RAMShaper' focusable=False
+  ControlType.Text name='read-only observation' focusable=False
+  ControlType.Text name='Overview' focusable=False
+  ControlType.Text name='Mode: Observe Only. RAMShaper will not change process settings.' focusable=False
+  ControlType.Text name='System: Windows 10 Pro · 10.0.26200.9711' focusable=False
+  ControlType.Text name='Serving agent instance: agent: cli-29524-134373231069391602' focusable=False
+  ControlType.Text name='Data freshness: just updated' focusable=False
+  ControlType.Button name='Quit' focusable=True
+  ControlType.Group name='Memory pressure' focusable=False
+  ControlType.Group name='Physical memory' focusable=False
+  ControlType.Group name='System commit' focusable=False
+  ControlType.Text name='Status: Nothing to optimize right now.' focusable=False
+  ControlType.Text name='RAMShaper observes and explains; it does not create RAM, and Windows remains responsible for scheduling and virtual memory.' focusable=False
+    ControlType.Text name='System commit' focusable=False
+    ControlType.Text name='System commit used: 34.35 GiB' focusable=False
+    ControlType.Text name='System commit limit: 67.75 GiB' focusable=False
+    ControlType.Text name='System commit headroom (derived): 33.40 GiB' focusable=False
+    ControlType.Text name='System commit charge, not pagefile occupancy.' focusable=False
+      ControlType.Text name='Headroom' focusable=False
+      ControlType.Text name='33.40 GiB' focusable=False
+      ControlType.Text name='Limit' focusable=False
+      ControlType.Text name='67.75 GiB' focusable=False
+      ControlType.Text name='Used' focusable=False
+      ControlType.Text name='34.35 GiB' focusable=False
+    ControlType.Text name='Physical memory' focusable=False
+    ControlType.Text name='Physical memory total: 63.75 GiB' focusable=False
+    ControlType.Text name='Physical memory available: 36.95 GiB' focusable=False
+    ControlType.Text name='Physical memory in use (derived): 26.79 GiB' focusable=False
+    ControlType.Text name=''Available' is not merely unused pages.' focusable=False
+      ControlType.Text name='In use' focusable=False
+      ControlType.Text name='26.79 GiB' focusable=False
+      ControlType.Text name='Available' focusable=False
+      ControlType.Text name='36.95 GiB' focusable=False
+      ControlType.Text name='Total' focusable=False
+      ControlType.Text name='63.75 GiB' focusable=False
+    ControlType.Text name='Memory pressure' focusable=False
+    ControlType.Text name='OK' focusable=False
+    ControlType.Text name='No low-memory signal observed' focusable=False
+    ControlType.Text name='Level: Normal · Low-memory condition: not signaled' focusable=False
+    ControlType.Text name='Rule pressure_v1 · pending evidence: 0 signal / 31 clear observations' focusable=False
+    ControlType.Text name='Rule pressure_v1 (observation only). A low-memory signal does not by itself prove a user-visible slowdown.' focusable=False
+    ControlType.Text name='Mode: Observe Only' focusable=False
+[controlview] 42 elements (depth<=4 budget=200)
+  ControlType.Text name='RAMShaper' focusable=False
+  ControlType.Text name='read-only observation' focusable=False
+  ControlType.Text name='Overview' focusable=False
+  ControlType.Text name='Mode: Observe Only. RAMShaper will not change process settings.' focusable=False
+  ControlType.Text name='System: Windows 10 Pro · 10.0.26200.9711' focusable=False
+  ControlType.Text name='Serving agent instance: agent: cli-29524-134373231069391602' focusable=False
+  ControlType.Text name='Data freshness: just updated' focusable=False
+  ControlType.Button name='Quit' focusable=True
+  ControlType.Group name='Memory pressure' focusable=False
+  ControlType.Group name='Physical memory' focusable=False
+  ControlType.Group name='System commit' focusable=False
+  ControlType.Text name='Status: Nothing to optimize right now.' focusable=False
+  ControlType.Text name='RAMShaper observes and explains; it does not create RAM, and Windows remains responsible for scheduling and virtual memory.' focusable=False
+    ControlType.Text name='System commit' focusable=False
+    ControlType.Text name='System commit used: 34.35 GiB' focusable=False
+    ControlType.Text name='System commit limit: 67.75 GiB' focusable=False
+    ControlType.Text name='System commit headroom (derived): 33.40 GiB' focusable=False
+    ControlType.Text name='System commit charge, not pagefile occupancy.' focusable=False
+      ControlType.Text name='Headroom' focusable=False
+      ControlType.Text name='33.40 GiB' focusable=False
+      ControlType.Text name='Limit' focusable=False
+      ControlType.Text name='67.75 GiB' focusable=False
+      ControlType.Text name='Used' focusable=False
+      ControlType.Text name='34.35 GiB' focusable=False
+    ControlType.Text name='Physical memory' focusable=False
+    ControlType.Text name='Physical memory total: 63.75 GiB' focusable=False
+    ControlType.Text name='Physical memory available: 36.95 GiB' focusable=False
+    ControlType.Text name='Physical memory in use (derived): 26.79 GiB' focusable=False
+    ControlType.Text name=''Available' is not merely unused pages.' focusable=False
+      ControlType.Text name='In use' focusable=False
+      ControlType.Text name='26.79 GiB' focusable=False
+      ControlType.Text name='Available' focusable=False
+      ControlType.Text name='36.95 GiB' focusable=False
+      ControlType.Text name='Total' focusable=False
+      ControlType.Text name='63.75 GiB' focusable=False
+    ControlType.Text name='Memory pressure' focusable=False
+    ControlType.Text name='OK' focusable=False
+    ControlType.Text name='No low-memory signal observed' focusable=False
+    ControlType.Text name='Level: Normal · Low-memory condition: not signaled' focusable=False
+    ControlType.Text name='Rule pressure_v1 · pending evidence: 0 signal / 31 clear observations' focusable=False
+    ControlType.Text name='Rule pressure_v1 (observation only). A low-memory signal does not by itself prove a user-visible slowdown.' focusable=False
+    ControlType.Text name='Mode: Observe Only' focusable=False
+[rawview] 42 elements (depth<=3 budget=120)
+=== PHASE 2 (foreground + 3 s settle) ===
+PASS2 window: name='RAMShaper' framework='Slint'
+  ControlType.Text name='RAMShaper' focusable=False
+  ControlType.Text name='read-only observation' focusable=False
+  ControlType.Text name='Overview' focusable=False
+  ControlType.Text name='Mode: Observe Only. RAMShaper will not change process settings.' focusable=False
+  ControlType.Text name='System: Windows 10 Pro · 10.0.26200.9711' focusable=False
+  ControlType.Text name='Serving agent instance: agent: cli-29524-134373231069391602' focusable=False
+  ControlType.Text name='Data freshness: just updated' focusable=False
+  ControlType.Button name='Quit' focusable=True
+  ControlType.Group name='Memory pressure' focusable=False
+  ControlType.Group name='Physical memory' focusable=False
+  ControlType.Group name='System commit' focusable=False
+  ControlType.Text name='Status: Nothing to optimize right now.' focusable=False
+  ControlType.Text name='RAMShaper observes and explains; it does not create RAM, and Windows remains responsible for scheduling and virtual memory.' focusable=False
+    ControlType.Text name='System commit' focusable=False
+    ControlType.Text name='System commit used: 34.32 GiB' focusable=False
+    ControlType.Text name='System commit limit: 67.75 GiB' focusable=False
+    ControlType.Text name='System commit headroom (derived): 33.43 GiB' focusable=False
+    ControlType.Text name='System commit charge, not pagefile occupancy.' focusable=False
+      ControlType.Text name='Headroom' focusable=False
+      ControlType.Text name='33.43 GiB' focusable=False
+      ControlType.Text name='Limit' focusable=False
+      ControlType.Text name='67.75 GiB' focusable=False
+      ControlType.Text name='Used' focusable=False
+      ControlType.Text name='34.32 GiB' focusable=False
+    ControlType.Text name='Physical memory' focusable=False
+    ControlType.Text name='Physical memory total: 63.75 GiB' focusable=False
+    ControlType.Text name='Physical memory available: 36.97 GiB' focusable=False
+    ControlType.Text name='Physical memory in use (derived): 26.78 GiB' focusable=False
+    ControlType.Text name=''Available' is not merely unused pages.' focusable=False
+      ControlType.Text name='In use' focusable=False
+      ControlType.Text name='26.78 GiB' focusable=False
+      ControlType.Text name='Available' focusable=False
+      ControlType.Text name='36.97 GiB' focusable=False
+      ControlType.Text name='Total' focusable=False
+      ControlType.Text name='63.75 GiB' focusable=False
+    ControlType.Text name='Memory pressure' focusable=False
+    ControlType.Text name='OK' focusable=False
+    ControlType.Text name='No low-memory signal observed' focusable=False
+    ControlType.Text name='Level: Normal · Low-memory condition: not signaled' focusable=False
+    ControlType.Text name='Rule pressure_v1 · pending evidence: 0 signal / 45 clear observations' focusable=False
+    ControlType.Text name='Rule pressure_v1 (observation only). A low-memory signal does not by itself prove a user-visible slowdown.' focusable=False
+    ControlType.Text name='Mode: Observe Only' focusable=False
+[controlview-pass2] 42 elements (after foreground + 3 s)

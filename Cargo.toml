@@ -1,0 +1,57 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ramshaper-core",
+    "crates/ramshaper-platform",
+    "crates/ramshaper-windows",
+    "crates/ramshaper-cli",
+    "crates/ramshaper-bench",
+    "crates/ramshaper-agent",
+    "crates/ramshaper-ui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.93"
+publish = false
+
+[workspace.dependencies]
+ramshaper-core = { path = "crates/ramshaper-core" }
+ramshaper-platform = { path = "crates/ramshaper-platform" }
+ramshaper-windows = { path = "crates/ramshaper-windows" }
+ramshaper-agent = { path = "crates/ramshaper-agent" }
+ramshaper-ui = { path = "crates/ramshaper-ui" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+# Pinned exactly: the Windows binding surface is part of the audited
+# unsafe-FFI boundary (RS-001). Bump deliberately and re-run G0 checks.
+# Win32_Security is required only because CreateEventExW's signature
+# references SECURITY_ATTRIBUTES; no security APIs are called directly.
+windows = { version = "=0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Console",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_IO",
+    "Win32_System_Memory",
+    "Win32_System_Pipes",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Registry",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_Storage_FileSystem",
+    "Wdk_System_SystemServices",
+] }
+# TOML is the mandated configuration format (contract 14 §7).
+toml = "=1.1.8"
+
+[workspace.lints.rust]
+rust_2018_idioms = "warn"
+
+[workspace.lints.clippy]
+# OS-facing runtime paths must propagate errors, never unwrap (doc 11).
+unwrap_used = "deny"

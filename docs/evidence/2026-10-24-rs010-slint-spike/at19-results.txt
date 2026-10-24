@@ -1,0 +1,50 @@
+﻿=== A1: foreground + initial focused element ===
+focused: ControlType.Window name='RAMShaper'
+=== A2: after one TAB ===
+focused: ControlType.Button name='Quit'
+=== B: LiveSetting of the Memory pressure group (expect Polite=1) ===
+Memory pressure group: LiveSetting query failed: Exception calling "GetCurrentPropertyValue" with "1" argument(s): "Value cannot be null.
+Parameter name: property"
+=== A3: ENTER on focused Quit -> expect graceful exit 0 ===
+ui process exited; exit code = 0
+=== C: agent killed -> stale/disconnected text states (no color-only info) ===
+text elements (38):
+  'RAMShaper'
+  'read-only observation'
+  'Overview'
+  'Mode: Observe Only. RAMShaper will not change process settings.'
+  'Mode: Observe Only'
+  'System: Windows 10 Pro · 10.0.26200.9711'
+  'Serving agent instance: agent: -'
+  'Data freshness: last updated 11s ago'
+  'Memory pressure'
+  '?'
+  'No low-memory signal observed'
+  'Level: Normal · Low-memory condition: not signaled'
+  'Rule pressure_v1 · pending evidence: 0 signal / 63 clear observations'
+  'Rule pressure_v1 (observation only). A low-memory signal does not by itself prove a user-visible slowdown.'
+  'Physical memory'
+  'Physical memory total: 63.75 GiB'
+  'Total'
+  '63.75 GiB'
+  'Physical memory available: 36.56 GiB'
+  'Available'
+  '36.56 GiB'
+  'Physical memory in use (derived): 27.19 GiB'
+  'In use'
+  '27.19 GiB'
+  ''Available' is not merely unused pages.'
+  'System commit'
+  'System commit used: 34.78 GiB'
+  'Used'
+  '34.78 GiB'
+  'System commit limit: 67.75 GiB'
+  'Limit'
+  '67.75 GiB'
+  'System commit headroom (derived): 32.97 GiB'
+  'Headroom'
+  '32.97 GiB'
+  'System commit charge, not pagefile occupancy.'
+  'Status: Session agent not reachable — start 'ramshaper-agent serve'. Retrying…'
+  'RAMShaper observes and explains; it does not create RAM, and Windows remains responsible for scheduling and virtual memory.'
+screenshot saved: at19-stale-state.png (1195x797)

@@ -1,0 +1,516 @@
+// RAMShaper overview shell (RS-010 feasibility spike).
+// Implements the S01 Overview subset of docs/docs/06_UI_UX_DESIGN_SPEC.md:
+// pressure with evidence, physical memory, commit, honest unavailable/stale
+// states, Observe Only mode. Unreleased navigation is hidden (no dead
+// buttons). All dynamic text is set from Rust; this file is presentation.
+
+import { ListView } from "std-widgets.slint";
+
+// Design tokens (proposals from the UI spec; contrast audit pending).
+export global Palette {
+    out property <color> nav-background: #15263F;
+    out property <color> page-background: #F6F9FD;
+    out property <color> card-background: #FFFFFF;
+    out property <color> text-primary: #152238;
+    out property <color> text-secondary: #607089;
+    out property <color> accent: #2563EB;
+    out property <color> healthy: #0B9A77;
+    // Darkened from #B87513 (3.56:1 on the page background) so the 12 px
+    // stale/freshness label passes WCAG 1.4.3 at 4.5:1; enforced by the
+    // contrast-audit test in main.rs.
+    out property <color> warning: #9C6200;
+}
+
+// One table row of the Applications page. All values arrive pre-formatted
+// with units from Rust; `note` carries an unavailable reason ("[denied]")
+// and `accessible` is the whole-row description for screen readers.
+export struct ProcessRow {
+    pid: int,
+    name: string,
+    working-set: string,
+    private: string,
+    cpu: string,
+    io-read: string,
+    io-write: string,
+    note: string,
+    accessible: string,
+}
+
+// Shared column metrics so the header and the rows stay aligned.
+export global TableMetrics {
+    out property <length> pid-w: 64px;
+    out property <length> name-w: 190px;
+    out property <length> ws-w: 104px;
+    out property <length> priv-w: 104px;
+    out property <length> cpu-w: 72px;
+    out property <length> io-w: 104px;
+}
+
+export global UiState {
+    // Connection to the session agent: "connected" | "connecting" | "disconnected"
+    in-out property <string> connection-state: "connecting";
+    // Released pages; Rust owns the state (nav buttons report intent).
+    in-out property <string> current-page: "overview";
+    in-out property <string> os-label: "unknown OS";
+    // Serving agent instance id (changes when the agent restarts).
+    in-out property <string> agent-instance: "agent: -";
+    // How old the displayed data is, human readable.
+    in-out property <string> updated-ago: "waiting for the agent…";
+    // Pressure (rule pressure_v1): never a percentage, never "Critical".
+    in-out property <string> pressure-level: "Unknown";
+    in-out property <string> pressure-heading: "Waiting for observations…";
+    in-out property <string> pressure-evidence: "";
+    in-out property <string> pressure-missing: "";
+    in-out property <string> low-memory-state: "unavailable";
+    // Metric values (formatted with units in Rust; exact bytes also shown).
+    in-out property <string> phys-total: "unavailable";
+    in-out property <string> phys-available: "unavailable";
+    in-out property <string> phys-in-use: "unavailable";
+    in-out property <string> commit-used: "unavailable";
+    in-out property <string> commit-limit: "unavailable";
+    in-out property <string> commit-headroom: "unavailable";
+    // Primary status sentence (never "Free 8 GB instantly").
+    in-out property <string> cta-text: "Connecting to the session agent…";
+    // Semantic flags for non-color status pairing (text/icon always shown).
+    in-out property <bool> healthy: false;
+    in-out property <bool> elevated: false;
+    in-out property <bool> stale: false;
+    // Applications page (RS-011): rows come from the agent's GetProcesses.
+    in-out property <[ProcessRow]> process-rows;
+    in-out property <string> process-note: "Waiting for the first process table…";
+    // Mirror of the Rust-side sort key, for the active button state.
+    in-out property <string> process-sort: "working-set";
+    callback navigate(string);
+    callback sort-by(string);
+    callback quit();
+}
+
+component MetricRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <string> accessible-summary;
+    height: 22px;
+    HorizontalLayout {
+        alignment: start;
+        spacing: 12px;
+        Text {
+            text: root.label;
+            color: Palette.text-secondary;
+            vertical-alignment: center;
+            width: 110px;
+        }
+        Text {
+            text: root.value;
+            color: Palette.text-primary;
+            font-weight: 700;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+    }
+    // The row is announced as one labeled value, not as separate fragments.
+    accessible-role: text;
+    accessible-label: root.accessible-summary;
+}
+
+component MetricCard inherits Rectangle {
+    in property <string> title;
+    in property <string> footnote;
+    in property <string> accessible-summary;
+    background: Palette.card-background;
+    border-radius: 10px;
+    drop-shadow-blur: 4px;
+    drop-shadow-color: #00000014;
+    accessible-role: groupbox;
+    accessible-label: root.title;
+    accessible-description: root.accessible-summary;
+    VerticalLayout {
+        padding: 18px;
+        spacing: 10px;
+        Text {
+            text: root.title;
+            color: Palette.text-primary;
+            font-size: 16px;
+            font-weight: 700;
+        }
+        @children
+        Rectangle { height: 6px; }
+        if root.footnote != "": Text {
+            text: root.footnote;
+            color: Palette.text-secondary;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+    }
+}
+
+// A button styled from audited Palette tokens (AT-19 contrast audit): the
+// active variant is accent background with white text, the inactive variant
+// is card background with primary text — both text pairs are enforced
+// ≥ 4.5:1 by the programmatic contrast test in main.rs. The stock Button
+// style was found to render nearly invisible on the light page background.
+component PaletteButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    callback clicked();
+    height: 30px;
+    min-width: 96px;
+    border-radius: 8px;
+    background: root.active ? Palette.accent : Palette.card-background;
+    border-width: 1px;
+    border-color: root.active ? Palette.accent : Palette.text-secondary;
+    accessible-role: button;
+    accessible-label: root.label + (root.active ? " (current sort)" : "");
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        Text {
+            text: root.label;
+            color: root.active ? #FFFFFF : Palette.text-primary;
+            font-size: 12px;
+            font-weight: root.active ? 700 : 400;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+    TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// A sidebar navigation item. Only released pages appear here; the spec
+// forbids shipping dead buttons for unreleased slices.
+component NavItem inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    callback clicked();
+    height: 30px;
+    border-radius: 8px;
+    background: active ? #0F1B2E : transparent;
+    accessible-role: button;
+    accessible-label: root.label + (root.active ? " (current page)" : "");
+    HorizontalLayout {
+        padding: 10px;
+        alignment: start;
+        Text {
+            text: root.label;
+            color: root.active ? #FFFFFF : #C9D7EA;
+            font-size: 13px;
+            font-weight: root.active ? 700 : 400;
+            vertical-alignment: center;
+        }
+    }
+    TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// Column captions for the Applications table (aligned with TableMetrics).
+component ProcessHeaderRow inherits Rectangle {
+    height: 24px;
+    HorizontalLayout {
+        spacing: 10px;
+        Text { text: "pid"; width: TableMetrics.pid-w; color: Palette.text-secondary; font-size: 11px; vertical-alignment: center; }
+        Text { text: "name"; width: TableMetrics.name-w; color: Palette.text-secondary; font-size: 11px; vertical-alignment: center; }
+        Text { text: "working set"; width: TableMetrics.ws-w; color: Palette.text-secondary; font-size: 11px; vertical-alignment: center; }
+        Text { text: "private"; width: TableMetrics.priv-w; color: Palette.text-secondary; font-size: 11px; vertical-alignment: center; }
+        Text { text: "cpu%"; width: TableMetrics.cpu-w; color: Palette.text-secondary; font-size: 11px; vertical-alignment: center; }
+        Text { text: "io read/s"; width: TableMetrics.io-w; color: Palette.text-secondary; font-size: 11px; vertical-alignment: center; }
+        Text { text: "io write/s"; color: Palette.text-secondary; font-size: 11px; vertical-alignment: center; }
+    }
+}
+
+// One Applications table row. The whole row is announced as one accessible
+// label so screen readers read a sentence, not seven fragments.
+component ProcessRowDelegate inherits Rectangle {
+    in property <ProcessRow> entry;
+    height: 26px;
+    accessible-role: list-item;
+    accessible-label: root.entry.accessible;
+    HorizontalLayout {
+        spacing: 10px;
+        Text { text: root.entry.pid; width: TableMetrics.pid-w; color: Palette.text-secondary; font-size: 12px; vertical-alignment: center; overflow: elide; }
+        Text { text: root.entry.name; width: TableMetrics.name-w; color: Palette.text-primary; font-size: 12px; vertical-alignment: center; overflow: elide; }
+        Text { text: root.entry.working-set + (root.entry.note == "" ? "" : " " + root.entry.note); width: TableMetrics.ws-w; color: Palette.text-primary; font-size: 12px; vertical-alignment: center; overflow: elide; }
+        Text { text: root.entry.private; width: TableMetrics.priv-w; color: Palette.text-primary; font-size: 12px; vertical-alignment: center; overflow: elide; }
+        Text { text: root.entry.cpu; width: TableMetrics.cpu-w; color: Palette.text-primary; font-size: 12px; vertical-alignment: center; overflow: elide; }
+        Text { text: root.entry.io-read; width: TableMetrics.io-w; color: Palette.text-primary; font-size: 12px; vertical-alignment: center; overflow: elide; }
+        Text { text: root.entry.io-write; color: Palette.text-primary; font-size: 12px; vertical-alignment: center; overflow: elide; }
+    }
+}
+
+// RS-011 Applications page: the agent's process inventory as an accessible,
+// sortable table. Units are always shown; unavailable values show their
+// reason inline instead of a zero.
+component ApplicationsPage inherits Rectangle {
+    VerticalLayout {
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 10px;
+            Text {
+                text: UiState.process-note;
+                color: Palette.text-secondary;
+                font-size: 12px;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                wrap: word-wrap;
+                accessible-role: text;
+                accessible-label: "Process table status: " + UiState.process-note;
+            }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+            Text {
+                text: "Sort by";
+                color: Palette.text-secondary;
+                font-size: 12px;
+                vertical-alignment: center;
+            }
+            PaletteButton { label: "Working set"; active: UiState.process-sort == "working-set"; clicked => { UiState.sort-by("working-set"); } }
+            PaletteButton { label: "Private"; active: UiState.process-sort == "private"; clicked => { UiState.sort-by("private"); } }
+            PaletteButton { label: "CPU"; active: UiState.process-sort == "cpu"; clicked => { UiState.sort-by("cpu"); } }
+            PaletteButton { label: "Name"; active: UiState.process-sort == "name"; clicked => { UiState.sort-by("name"); } }
+        }
+        ProcessHeaderRow { }
+        Rectangle {
+            vertical-stretch: 1;
+            border-radius: 8px;
+            background: Palette.card-background;
+            border-width: 1px;
+            border-color: #E3EAF3;
+            clip: true;
+            ListView {
+                for entry in UiState.process-rows: ProcessRowDelegate {
+                    entry: entry;
+                }
+            }
+            accessible-role: table;
+        }
+        Text {
+            text: "Working set is resident pages (shared memory can count in several processes); 'private' is private commit, not private resident. Names are labels; identity is pid + exact creation time.";
+            color: Palette.text-secondary;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "RAMShaper";
+    min-width: 1024px;
+    min-height: 640px;
+    preferred-width: 1180px;
+    preferred-height: 760px;
+    background: Palette.page-background;
+
+    if UiState.stale: Rectangle {
+        x: 0; y: 0; width: parent.width; height: 3px;
+        background: Palette.warning;
+    }
+
+    HorizontalLayout {
+        // Navigation (navy). Only released functionality is shown; the
+        // spec forbids shipping dead buttons for unreleased slices.
+        Rectangle {
+            width: 210px;
+            background: Palette.nav-background;
+            VerticalLayout {
+                padding: 18px;
+                spacing: 6px;
+                Text {
+                    text: "RAMShaper";
+                    color: #FFFFFF;
+                    font-size: 20px;
+                    font-weight: 800;
+                }
+                Text {
+                    text: "read-only observation";
+                    color: #9FB2CC;
+                    font-size: 11px;
+                }
+                Rectangle { height: 18px; }
+                NavItem {
+                    label: "Overview";
+                    active: UiState.current-page == "overview";
+                    clicked => {
+                        UiState.navigate("overview");
+                    }
+                }
+                NavItem {
+                    label: "Applications";
+                    active: UiState.current-page == "applications";
+                    clicked => {
+                        UiState.navigate("applications");
+                    }
+                }
+                // Managed App Groups, Profiles, Insights and the Actions Log
+                // arrive with their gated slices and are hidden in this
+                // build.
+                Rectangle { vertical-stretch: 1; }
+                Rectangle {
+                    height: 34px;
+                    border-radius: 8px;
+                    background: #0F1B2E;
+                    HorizontalLayout {
+                        padding: 8px;
+                        alignment: center;
+                        Text {
+                            text: "Mode: Observe Only";
+                            color: #C9D7EA;
+                            font-size: 12px;
+                            font-weight: 700;
+                        }
+                    }
+                    accessible-role: text;
+                    accessible-label: "Mode: Observe Only. RAMShaper will not change process settings.";
+                }
+            }
+        }
+
+        // Content
+        VerticalLayout {
+            padding: 20px;
+            spacing: 14px;
+
+            // Header row
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: center;
+                Text {
+                    text: UiState.os-label;
+                    color: Palette.text-primary;
+                    font-size: 15px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    accessible-role: text;
+                    accessible-label: "System: " + UiState.os-label;
+                }
+                Text {
+                    text: UiState.agent-instance;
+                    color: Palette.text-secondary;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    accessible-role: text;
+                    accessible-label: "Serving agent instance: " + UiState.agent-instance;
+                }
+                Text {
+                    text: UiState.updated-ago;
+                    color: UiState.stale ? Palette.warning : Palette.text-secondary;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    accessible-role: text;
+                    accessible-label: "Data freshness: " + UiState.updated-ago;
+                }
+                PaletteButton {
+                    label: "Quit";
+                    clicked => { UiState.quit(); }
+                }
+            }
+
+            // Overview page (RS-010 spike subset). Hidden, not dead, while
+            // the Applications page is shown.
+            if UiState.current-page == "overview": VerticalLayout {
+                spacing: 14px;
+                vertical-stretch: 1;
+
+                // Pressure card (primary). Level is never a percentage and
+                // never "Critical" (reserved by pressure_v1).
+            MetricCard {
+                title: "Memory pressure";
+                footnote: UiState.pressure-missing == ""
+                    ? "Rule pressure_v1 (observation only). A low-memory signal does not by itself prove a user-visible slowdown."
+                    : UiState.pressure-missing;
+                accessible-summary: "Memory pressure " + UiState.pressure-level + ". " + UiState.pressure-heading;
+                HorizontalLayout {
+                    spacing: 14px;
+                    alignment: start;
+                    Text {
+                        text: UiState.healthy ? "OK" : (UiState.elevated ? "ATTN" : "?");
+                        color: UiState.healthy ? Palette.healthy
+                              : (UiState.elevated ? Palette.warning : Palette.text-secondary);
+                        font-size: 26px;
+                        font-weight: 800;
+                        vertical-alignment: center;
+                        // Non-color pairing: the word carries the meaning.
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 4px;
+                        Text {
+                            text: UiState.pressure-heading;
+                            color: Palette.text-primary;
+                            font-size: 18px;
+                            font-weight: 700;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: "Level: " + UiState.pressure-level
+                                  + " · Low-memory condition: " + UiState.low-memory-state;
+                            color: Palette.text-secondary;
+                            font-size: 12px;
+                        }
+                        if UiState.pressure-evidence != "": Text {
+                            text: UiState.pressure-evidence;
+                            color: Palette.text-secondary;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+                // Announce pressure changes without reading every sample.
+                accessible-role: groupbox;
+                accessible-live-region: polite;
+            }
+
+            HorizontalLayout {
+                spacing: 14px;
+                MetricCard {
+                    title: "Physical memory";
+                    footnote: "'Available' is not merely unused pages.";
+                    accessible-summary: "Physical memory total " + UiState.phys-total
+                        + ", available " + UiState.phys-available + ", in use " + UiState.phys-in-use + ".";
+                    MetricRow { label: "Total"; value: UiState.phys-total; accessible-summary: "Physical memory total: " + UiState.phys-total; }
+                    MetricRow { label: "Available"; value: UiState.phys-available; accessible-summary: "Physical memory available: " + UiState.phys-available; }
+                    MetricRow { label: "In use"; value: UiState.phys-in-use; accessible-summary: "Physical memory in use (derived): " + UiState.phys-in-use; }
+                }
+                MetricCard {
+                    title: "System commit";
+                    footnote: "System commit charge, not pagefile occupancy.";
+                    accessible-summary: "System commit used " + UiState.commit-used
+                        + ", limit " + UiState.commit-limit + ", headroom " + UiState.commit-headroom + ".";
+                    MetricRow { label: "Used"; value: UiState.commit-used; accessible-summary: "System commit used: " + UiState.commit-used; }
+                    MetricRow { label: "Limit"; value: UiState.commit-limit; accessible-summary: "System commit limit: " + UiState.commit-limit; }
+                    MetricRow { label: "Headroom"; value: UiState.commit-headroom; accessible-summary: "System commit headroom (derived): " + UiState.commit-headroom; }
+                }
+            }
+
+            Rectangle { vertical-stretch: 1; }
+
+            Text {
+                text: UiState.cta-text;
+                color: Palette.accent;
+                font-size: 15px;
+                font-weight: 700;
+                accessible-role: text;
+                accessible-label: "Status: " + UiState.cta-text;
+            }
+            Text {
+                text: "RAMShaper observes and explains; it does not create RAM, and Windows remains responsible for scheduling and virtual memory.";
+                color: Palette.text-secondary;
+                font-size: 11px;
+                wrap: word-wrap;
+            }
+            }
+
+            // Applications page (RS-011): the agent's process inventory.
+            if UiState.current-page == "applications": ApplicationsPage {
+                vertical-stretch: 1;
+            }
+        }
+    }
+}
