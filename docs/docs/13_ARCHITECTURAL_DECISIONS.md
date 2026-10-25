@@ -251,3 +251,85 @@ is 1 MiB.
 **Consequences:** the Applications page adds zero idle agent cost, degrades
 honestly (disconnect notes, unsupported agents, capped rows), and leaves
 eligibility explanations to RS-015 (G3). The page is observation-only.
+
+## ADR-027: Action journal — pure state machine + SQLite store — Accepted (implemented 2026-10-25; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+
+**Context:** RS-031 (G3 prerequisite): durable intent before any policy
+write, crash reconciliation that never reapplies, pinned recovery records,
+and schema/quota refusal semantics (contract 14 §6, AT-12/AT-18 inputs).
+
+**Decisions:**
+- The state machine (`Prepared`/`Applied`/`RestorePending`/`Restored`/
+  `TargetGone`/`Conflict`/`Failed`/`Uncertain`), the legal-transition
+  table, **startup reconciliation** and the pinning/retention/quota rules
+  are **pure code in `ramshaper-core::journal`** — no I/O, fully
+  fixture-testable. The store cannot invent semantics.
+- Reconciliation reads **reality, not intentions**: with the record's
+  target observed, `current == desired` → the write happened (restore the
+  original); `current == original` → resolve with **no OS call at all**; a
+  third value → `Conflict` (preserve it); identity mismatch → `TargetGone`
+  (zero writes to a replacement); unreadable → `Uncertain` (pinned). This
+  is the AT-12 "crash after Prepared is indistinguishable from
+  write-then-crash" rule made executable.
+- Persistence is a new crate `ramshaper-journal` on **rusqlite 0.32
+  (bundled SQLite)** — a new workspace dependency, isolated so the compile
+  cost never reaches core/cli. Schema version lives in
+  `PRAGMA user_version`; a newer/other database is refused
+  (`SchemaMismatch`/`Corrupt`) and **left untouched**; `SQLITE_FULL` maps
+  to `DiskFull` ("continue observation, disable new actions").
+- Transitions run in one transaction with an **optimistic state guard**
+  (`WHERE state = expected`): two writers cannot both move a record; the
+  loser gets a typed `StateConflict`. `record_prepared` is idempotent per
+  action ID — replay returns the existing record and never extends TTL.
+- Unresolved records are **pinned**: pruning skips them by state, and the
+  record cap surfaces as `QuotaReached` (block new actions) rather than
+  evicting recovery data. `Failed` keeps recovery intent only when a write
+  may have occurred.
+- No actuator exists yet: the fake actuator in tests is an in-memory
+  value + identity flag. Wiring the real (still disabled) actuator and the
+  agent's startup recovery loop is G3 work on top of this store.
+
+**Consequences:** AT-12's decision logic and AT-18's storage-failure
+semantics are now pinned by 18 tests (11 pure + 7 store) without any OS
+writes; the policy coordinator that later drives this store gets crash
+safety from SQLite transactions plus a state machine it cannot misuse.
+
+## ADR-028: Eligibility matrix — pure, observation-driven, unknown-denies — Accepted (implemented 2026-10-25; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+
+**Context:** RS-015 (G3 prerequisite for RS-016): the apply-time gate list
+of contract 14 §5 under risks R-03 (unknown eligibility signals) and
+R-10 (descendants/respawn outliving consent).
+
+**Decisions:**
+- The matrix is **pure code in `ramshaper-core::eligibility`**: adapters
+  (G3 wiring) observe reality through OS queries and hand the observations
+  to `evaluate`; the module makes no OS calls and cannot invent facts.
+- Every signal is an **observation enum with an `Unknown` variant, and
+  unknown always denies** (R-03). Doc 04's rule that an executable-name
+  denylist must never replace the signal gate is enforced structurally:
+  the image name only feeds the compatibility allowlist and user
+  exclusions, never identity or authority.
+- The **tested compatibility allowlist is evidence, not authority**: it
+  lists workloads that passed RS-024 Stage B compatibility testing, is
+  versioned, compares case-insensitively by bare image name, and **ships
+  empty** because nothing has been tested yet. User/imported config can
+  never populate it.
+- Apply-input freshness (contract 14 §3: 2 s) is decided **in core** from
+  the observation's age, inclusive at the bound, so the threshold exists
+  in exactly one testable place.
+- Reports are **explain-all**: every check is evaluated and listed (not
+  just the first failure) with stable machine codes and `{code, message}`
+  deny reasons — consumed later by the RS-013 UI and `PreviewAction` /
+  `Ineligible` IPC detail.
+- PID reuse denies through the existing `IdentityVerification` (a
+  replacement never inherits authority); **observed live children deny**
+  the leaf-workload check (R-10: never enroll descendants implicitly).
+- Deliberately out of scope: the per-identity cooldown and stale-input
+  safety trip (RS-018), pressure-evidence freshness (an RS-016 preview
+  prerequisite), and the OS signal adapters (foreground, owner/session,
+  classification — the tested signal matrix R-03 demands before G3).
+
+**Consequences:** RS-016's preview/confirm flow and RS-013's action UI get
+a complete, testable gate they only have to feed honestly; the "unknown
+denies" safety property and the empty-by-design allowlist are pinned by 23
+tests before any policy code exists.

@@ -1063,3 +1063,163 @@ history summary. The concurrent session's criteria-declared rig in
 `docs/evidence/soak/at06-20261024/` (1 Hz + bench windows) was interrupted
 at the same time and has not been relaunched by this session — its owner
 should relaunch it or fold its criteria onto a shared run.
+
+---
+
+# RS-031 — action journal, first slice (pure state machine + SQLite store), 2026-10-25
+
+**Scope implemented:** the journal foundation required before any policy
+write: the pure action state machine, startup reconciliation and
+pinning/quota rules in `ramshaper-core::journal`, and the SQLite-backed
+store in a new `ramshaper-journal` crate (rusqlite 0.32 bundled — a new
+workspace dependency). **No actuator exists and nothing in this slice can
+write a process setting**; the fake actuator in tests is an in-memory
+value + identity flag. The G3 policy coordinator, real actuator wiring and
+agent startup-recovery loop build on this store later.
+
+**What is pinned by tests (18 new: 11 pure, 7 store):**
+
+- The legal transition table exactly (incl. refusals: no skipping the
+  read-back, no backward jumps, no resolving `Conflict` by force).
+- **Startup reconciliation reads reality** (AT-12): crash-after-Prepared
+  with `current == desired` → only the ORIGINAL is written back (never a
+  re-apply); `current == original` → the record resolves with **zero OS
+  calls**; a third value → `Conflict` preserved untouched; identity
+  mismatch (PID reuse) → `TargetGone` with zero writes to the replacement;
+  unreadable → `Uncertain`, pinned, nothing inferred from defaults.
+- Durability across restarts: a Prepared record survives close/reopen and
+  appears in the recovery set with its exact identity (PID + creation
+  FILETIME) intact.
+- Replay idempotency: re-recording an action ID returns the existing
+  record; TTL is never extended.
+- Optimistic guard: a transition whose expected state has moved fails with
+  a typed `StateConflict`; missing records are explicit `Missing`.
+- Pinning/quota: a `Conflict` record as old as the retention window is
+  never pruned; only terminal unpinned records go; at cap with only pinned
+  records the pure decision blocks new actions.
+- Schema refusal: a `user_version` from a future build is refused with
+  `SchemaMismatch { found }` and the file is byte-for-byte untouched
+  (verified: version and records unchanged after the refused open); a
+  non-database file is `Corrupt`, also untouched.
+- `SQLITE_FULL` classifies to `DiskFull` (continue observation, disable
+  new actions) by primary result code, not string matching.
+
+**Workspace gates (2026-10-25):** fmt clean; clippy workspace-wide
+`-D warnings` clean; `cargo test --workspace --locked` **226 passed,
+0 failed** (both sessions' increments: core 119 incl. journal, journal 7,
+plus the earlier suites).
+
+**Not in this slice (recorded, not hidden):** the real actuator (G3, stays
+disabled until recovery tests pass per the roadmap rule), agent integration
+(startup recovery loop, `ListActions` serving real records), disk-full
+live-fault injection (the classification is unit-pinned; an induced
+`SQLITE_FULL` run on a full temp volume is AT-18 material), and
+clear-history/erase-all interplay (needs the retention UI decisions).
+
+**Environment:** same machine/toolchain as the prior entries (Windows 11
+build 26200.9711, standard user, Rust 1.93.1); `Cargo.lock` updated for
+`ramshaper-journal` + `rusqlite`/`libsqlite3-sys` (bundled) + `tempfile`
+(dev). The AT-06 soak attempt 3 was running throughout (seq 203 at gate
+time) and is unaffected — the journal crate is not in any binary the soak
+runs.
+
+---
+
+# RS-015 — eligibility matrix, 2026-10-25
+
+**Scope implemented:** the apply-time eligibility gate for the first policy
+action as pure logic in `ramshaper-core::eligibility` (contract 14 §5).
+Eleven named checks — identity (PID reuse), owner/session, foreground
+(fresh, target not foreground), compatibility allowlist, safety
+classification, user exclusion, original-Normal priority, leaf workload
+(no live children), no outstanding action, journal available, priority API
+capability. No OS calls: adapters hand observations to `evaluate`;
+nothing here can write a process setting or query the OS.
+
+**What is pinned by tests (23 new):**
+
+- **Every `Unknown` denies** (R-03): unknown owner/session, focus,
+  classification, priority class, child state and API capability each
+  produce a typed deny.
+- **The initial allowlist is empty by design**: with no workload having
+  passed RS-024 Stage B compatibility testing, a fully-observed "good"
+  target still denies with exactly `not_on_tested_allowlist`.
+- PID reuse denies and the audit text carries the replacement identity
+  (authority never transfers); unreachable identity denies with the
+  machine failure code (`exited_87` etc.).
+- Foreground semantics: a fresh observation with the target foreground
+  denies (`target_foreground`); background observations are fresh at
+  age ≤ 2,000 ms (contract 14 §3, inclusive) and stale at 2,001 ms.
+- All seven protected categories deny (audio, security, accessibility,
+  install/update, game/anti-cheat, RAMShaper self, known incompatible
+  priority manager) with `protected_<category>` codes.
+- User exclusions match case-insensitively (`LeafApp.EXE` vs
+  `leafapp.exe`) and the deny reports the matched name; exclusion can
+  only reduce eligibility, never grant it.
+- Observed live children deny the leaf-workload gate (R-10); non-Normal
+  and unknown original priority deny (skipped, not corrected).
+- Multiple failures are all reported in the documented order (tested with
+  three simultaneous failures); `first_deny` follows the same order.
+- Reports serialize for IPC/UI with stable machine codes
+  (`{"code":"excluded_by_user","message":...}`) — never Rust variant
+  names.
+
+**Workspace gates (2026-10-25):** fmt clean; clippy `--workspace
+--all-targets -D warnings` clean and `cargo test --workspace --locked`
+green (242 passed) **excluding `ramshaper-journal`**, whose in-flight
+store tests were being edited by the parallel session at gate time (one
+failing test there is theirs, untouched by this slice — this module adds
+no dependency and does not touch the journal crate).
+
+**Not in this slice (recorded, not hidden):** OS signal adapters —
+foreground detection, owner/session queries and the protected-category
+signal matrix that R-03 requires documented and tested before G3; allowlist
+population (blocked on RS-024 Stage B evidence); IPC/UI wiring
+(`PreviewAction` consumes this in RS-016; RS-013 renders reports); the
+per-identity cooldown and stale-input trip (RS-018).
+
+**Environment:** same machine/toolchain as prior entries (Windows 11
+build 26200.9711, standard user, Rust 1.93.1); no new dependencies. The
+AT-06 soak attempt 3 was unaffected.
+
+---
+
+# RS-031 — storage-failure semantics (clear-history + disk-full), 2026-10-25
+
+**Scope:** the remaining two storage-failure inputs of AT-18 that the store
+can exercise without a policy coordinator: **clear-history during an active
+action**, and a deterministic **SQLITE_FULL fault**.
+
+**Clear-history (contract 14 §9):** `JournalStore::clear_history()` removes
+terminal unpinned records of any age and **retains every active/unresolved
+recovery record**, returning `(removed, retained)` so callers can explain
+the retained set ("never say all restored while unresolved records
+remain"). Pinned by test: a `Restored`, an `Applied` and a `Conflict`
+record together → `(1, 2)` — the active action and the pinned conflict
+survive and remain in the served recovery set.
+
+**Disk-full (AT-18):** `SQLITE_FULL` is induced deterministically via the
+documented testing hook `set_fault_page_cap` — a per-connection
+`PRAGMA max_page_count` (probed first: the pragma enforces at-or-above the
+current page count; values below the current size clamp away, so the test
+caps at 50 pages and grows past it with ~8 KB rows; real exhaustion takes
+the identical error path, and creating an actually-full volume needs
+privileges the standard-user tests run without). Pinned by test:
+record inserts fail with the typed `DiskFull` error; **prior records stay
+intact and readable** (the journal is consistent, not half-written);
+**recovery proceeds while "full"** — a transition of the recorded intent
+commits (in-page update, no growth); lifting the cap accepts new records
+again. Plus a quota gate helper, `may_record_new_action(cap)`, folding the
+current counts into the pure block-don't-evict decision.
+
+**Workspace gates (2026-10-25):** fmt clean; clippy workspace-wide
+`-D warnings` clean; `cargo test --workspace --locked` **251 passed,
+0 failed** (includes the concurrent session's RS-015 eligibility suite,
+landed the same evening; journal crate now 9 store tests + 11 pure-core
+journal tests). The AT-06 soak attempt 3 was running throughout (seq 245
+at gate time).
+
+**RS-031 remains open for:** the real (still disabled) actuator, agent
+startup-recovery wiring and `ListActions` serving records, crash-boundary
+fault injection at each commit point in a real process (needs the agent
+integration), and clear-history/erase-all UX decisions (RS-013).

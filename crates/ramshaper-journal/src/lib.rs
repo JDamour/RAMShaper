@@ -144,6 +144,12 @@ pub struct JournalStore {
     conn: std::sync::Arc<Mutex<Connection>>,
 }
 
+impl std::fmt::Debug for JournalStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JournalStore").finish_non_exhaustive()
+    }
+}
+
 const CREATE_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS actions (
     action_id              TEXT PRIMARY KEY,
@@ -376,6 +382,69 @@ impl JournalStore {
             )
             .map_err(|e| JournalError::classify(&e))?;
         Ok(changed)
+    }
+
+    /// Clear-history (contract 14 §9): remove terminal diagnostics of any
+    /// age, **retain** every active/unresolved recovery record. Returns
+    /// `(removed, retained)`; the caller explains the retained set to the
+    /// user ("never say all restored while unresolved records remain").
+    pub fn clear_history(&self) -> Result<(usize, usize), JournalError> {
+        let conn = self.conn.lock().expect("journal lock");
+        let (total, _pinned) = self.counts_with(&conn)?;
+        let removed = conn
+            .execute(
+                "DELETE FROM actions
+                 WHERE state IN ('Restored', 'TargetGone')
+                   AND recovery_retained = 0",
+                [],
+            )
+            .map_err(|e| JournalError::classify(&e))?;
+        Ok((removed, total - removed))
+    }
+
+    /// Quota gate (contract: record caps block new actions instead of
+    /// evicting recovery data): whether a new `Prepared` record may be
+    /// written at the given cap, from the current counts plus the pure
+    /// decision.
+    pub fn may_record_new_action(&self, cap: usize) -> Result<bool, JournalError> {
+        let conn = self.conn.lock().expect("journal lock");
+        let (total, pinned) = self.counts_with(&conn)?;
+        Ok(ramshaper_core::journal::may_record_new(total, pinned, cap))
+    }
+
+    /// Deterministic fault injection for the disk-full path: caps this
+    /// connection's database page count so further growth fails with
+    /// `SQLITE_FULL` — the same error path real storage exhaustion takes
+    /// (creating an actually-full volume needs privileges this build's
+    /// tests run without). `None` lifts the cap. Testing affordance only.
+    pub fn set_fault_page_cap(&self, pages: Option<u32>) -> Result<(), JournalError> {
+        let conn = self.conn.lock().expect("journal lock");
+        let sql = pages.map_or("PRAGMA max_page_count = 0".to_string(), |n| {
+            format!("PRAGMA max_page_count = {n}")
+        });
+        conn.execute_batch(&sql)
+            .map_err(|e| JournalError::classify(&e))
+    }
+
+    /// counts() over an existing connection (internal helper).
+    fn counts_with(&self, conn: &Connection) -> Result<(usize, usize), JournalError> {
+        let mut stmt = conn
+            .prepare("SELECT state, recovery_retained FROM actions")
+            .map_err(|e| JournalError::classify(&e))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? != 0))
+            })
+            .map_err(|e| JournalError::classify(&e))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| JournalError::classify(&e))?;
+        let pinned = rows
+            .iter()
+            .filter(|(state, retained)| {
+                state_from_name(state).is_some_and(|s| s.is_pinned(*retained))
+            })
+            .count();
+        Ok((rows.len(), pinned))
     }
 }
 

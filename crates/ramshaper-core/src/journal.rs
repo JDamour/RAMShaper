@@ -193,6 +193,10 @@ pub fn transition(state: ActionState, event: &Event) -> Result<ActionState, Tran
         // reapply.
         (ActionState::Prepared, Event::ReconcileWriteHappened) => ActionState::RestorePending,
         (ActionState::Prepared, Event::ReconcileNoWrite) => ActionState::Restored,
+        // Reconciliation of a never-applied record whose target vanished or
+        // whose value changed externally resolves terminally the same way.
+        (ActionState::Prepared, Event::TargetVanished) => ActionState::TargetGone,
+        (ActionState::Prepared, Event::ExternalChange) => ActionState::Conflict,
         (ActionState::Uncertain, Event::ReconcileWriteHappened) => ActionState::RestorePending,
         (ActionState::Uncertain, Event::ReconcileNoWrite) => ActionState::Restored,
         (ActionState::Uncertain, Event::RestoreRequested) => ActionState::RestorePending,

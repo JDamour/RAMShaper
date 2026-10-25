@@ -14,6 +14,7 @@
 pub mod clock;
 pub mod cohort;
 pub mod config;
+pub mod eligibility;
 pub mod envelope;
 pub mod history;
 pub mod identity;
@@ -35,6 +36,12 @@ pub use cohort::{
 };
 pub use config::{
     ConfigError, CoreConfig, WatchSettings, CONFIG_SCHEMA_VERSION, MODE_OBSERVE_ONLY,
+};
+pub use eligibility::{
+    evaluate, Allowlist, CheckId, CheckResult, ChildObservation, DenyReason, EligibilityInputs,
+    EligibilityReport, FocusObservation, Outcome, OwnerSessionObservation, PriorityCapability,
+    PriorityClassObservation, ProtectedCategory, SafetyClassification, APPLY_INPUT_FRESHNESS_MS,
+    ELIGIBILITY_RULES_VERSION,
 };
 pub use envelope::{LowMemorySignal, MetricEnvelope};
 pub use history::{BoundedHistory, HistoryStats, DEFAULT_BYTE_BUDGET, DEFAULT_RETENTION_MS};
