@@ -1289,3 +1289,17 @@ and RS-024 Stage B comparison over dry-run logs.
 **Environment:** same machine/toolchain as prior entries (Windows 11
 build 26200.9711, standard user, Rust 1.93.1); no new dependencies. The
 AT-06 soak attempt 3 was running throughout and is unaffected.
+
+**RS-019 collision addendum (2026-10-25 21:05):** after this section
+landed (commit 9e0bdaf, CHANGELOG 0.3.21, ADR-029), an **unwired
+in-flight duplicate** was found in the tree:
+`crates/ramshaper-core/src/dryrun.rs` (parallel session, file created
+20:45 local — before this section's changelog entry landed; not declared
+in `lib.rs`, not compiled, not tested, and swept into 9e0bdaf by a
+`git add -A`). `ramshaper-core::policy` (this section) is the canonical,
+tested, documented implementation — **do not build on dryrun.rs**. To its
+author: fold anything worth keeping into `policy.rs` (its
+`Step::Observe`/`Step::Probe` trace model and the AT-22 independent-rerun
+reference are the notable differences worth reconciling), then delete the
+file. The `271 passed` gate claim in 9e0bdaf covers everything compiled
+at gate time; dryrun.rs was not (and is not) part of any build.
