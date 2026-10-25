@@ -333,3 +333,45 @@ R-10 (descendants/respawn outliving consent).
 a complete, testable gate they only have to feed honestly; the "unknown
 denies" safety property and the empty-by-design allowlist are pinned by 23
 tests before any policy code exists.
+
+## ADR-029: Policy dry-run — compose the real rules over synthetic traces — Accepted (implemented 2026-10-25; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+
+**Context:** RS-019 (G3 prerequisite for RS-016): the 0.2 policy's
+decision behavior must be provable deterministic — including every
+deny/no-action path — before `PreviewAction`/`ConfirmAction` exist and
+before any actuator is enabled.
+
+**Decisions:**
+- The dry run is **pure composition, not a parallel implementation**: it
+  feeds a synthetic trace through the real `pressure_v1` classifier
+  (RS-009), the real eligibility matrix (RS-015) and the real journal
+  transition table (RS-031). If the composition is wrong, the dry run is
+  wrong — which is exactly what makes it evidence.
+- **No OS writes and no auto-apply**: an offered preview requires fresh
+  `Elevated` pressure plus full eligibility, and an apply happens only at
+  an explicit synthetic confirmation. Simulated writes always succeed —
+  OS-failure behavior belongs to the store fault tests (AT-18/RS-031),
+  not to decision logic.
+- **Time comes from the trace** (`monotonic_ms` per step); the engine has
+  no clock, so identical inputs yield byte-identical logs
+  (schema `ramshaper.policy-dryrun.v1`, stable machine codes).
+- Every terminal cause is a first-class value: `NoActionReason` (8 codes)
+  and `ResolveCause` (8 codes incl. TTL, foreground, vanish, external
+  conflict, child, stale input, config invalidation, disable) map through
+  the journal table to `Restored`/`TargetGone`/`Conflict`. When several
+  triggers coincide, a **fixed precedence** (disable first) decides, and
+  that order is pinned by tests.
+- Contract subtleties made executable: the preview window (30 s,
+  inclusive) and eligibility are **re-checked at confirmation** (an
+  eligibility change between offer and confirm yields an ineligible
+  confirmation, never a surprise apply); journal unavailability blocks
+  new applies but never recovery; a pending preview is not a new action
+  (re-offers keep the action id until expiry).
+- Deliberately unmodeled, owned by RS-018: the 60 s per-identity cooldown
+  and the stale-input trip — a resolved experiment can be re-offered in
+  the simulation, and a boundary test documents that this is a boundary,
+  not an oversight.
+
+**Consequences:** RS-016 gets a validated decision core to wire
+`PreviewAction`/`ConfirmAction` onto, and the future `policies --dry-run`
+CLI has its engine with 20 tests before any UI or actuation exists.

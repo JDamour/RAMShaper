@@ -1223,3 +1223,69 @@ at gate time).
 startup-recovery wiring and `ListActions` serving records, crash-boundary
 fault injection at each commit point in a real process (needs the agent
 integration), and clear-history/erase-all UX decisions (RS-013).
+
+---
+
+# RS-019 — deterministic policy dry-run, 2026-10-25
+
+**Scope implemented:** `ramshaper-core::policy` — `dry_run()` simulates
+the 0.2 policy decision layer over synthetic traces with zero OS writes,
+by composing the real building blocks: the `pressure_v1` classifier
+(RS-009), the eligibility matrix (RS-015) and the journal transition
+table (RS-031). Rules (`PolicyRules`) validate the contract TTL window
+(10–300 s, default 120 s); traces carry per-step pressure inputs, target
+observations, and synthetic events (confirm/disable/external
+change/config invalidation/journal availability). This is the engine the
+future `policies --dry-run` CLI command (contract 14 §8) and the
+RS-016 preview/confirm flow build on.
+
+**What is pinned by tests (20 new):**
+
+- **Determinism**: the same rules + trace produce an equal (and
+  byte-identical serialized) log — twice, asserted.
+- **Offer path**: previews only under fresh `Elevated` pressure
+  (3 consecutive signals, 2 s span) with a fully eligible target; the
+  offer carries the deterministic id (`dry-N`), TTL and rules version.
+- **Deny/no-action path, all explicit**: `pressure_unknown`,
+  `pressure_not_elevated` (incl. Normal), `ineligible` carrying every
+  eligibility deny reason (empty allowlist → exactly
+  `not_on_tested_allowlist`; foreground target → `target_foreground`),
+  `no_valid_preview`, `preview_expired`, `journal_unavailable`,
+  `disabled`, `action_active`.
+- **Confirm path**: TTL deadline = confirm + TTL (asserted numerically);
+  the 30 s preview window is inclusive at the boundary and expires one
+  ms beyond; **eligibility is re-checked at confirmation** — a
+  foreground return between offer and confirm denies the apply
+  (`applies_simulated == 0`); a confirm replay against an active action
+  is `ReplayIgnored` with exactly one apply.
+- **Resolve path — every contract trigger**: foreground return, target
+  vanished, external priority change, child appeared, stale focus,
+  config invalidation, manual disable, TTL expiry — each maps through the
+  journal table to its contract final state (`Restored`,
+  `TargetGone` for vanish, `Conflict` for external change), with a fixed
+  precedence (disable wins) when triggers coincide.
+- **Journal semantics in decisions**: journal unavailability blocks
+  offers and confirmations but **never blocks recovery** (the TTL resolve
+  proceeds with `journal_available = false`); one-action cap blocks new
+  previews while active; a re-offer keeps the action id until the
+  preview expires.
+- **Known boundary, pinned honestly**: the 60 s per-identity cooldown and
+  stale-input trip are RS-018's — a resolved experiment CAN be re-offered
+  in this simulation, asserted by a boundary test.
+- **Serialization**: the log serializes with schema
+  `ramshaper.policy-dryrun.v1`, summary counts and stable cause codes.
+
+**Workspace gates (2026-10-25):** fmt clean; clippy `--workspace
+--all-targets -D warnings` clean; `cargo test --workspace --locked`
+**271 passed, 0 failed** (core lib 161: 20 policy + 23 eligibility + 118
+prior; journal store 9 from the parallel session's AT-18 slice).
+
+**Not in this slice (recorded, not hidden):** the `policies --dry-run`
+CLI surface (appears with the gated policy capability per contract 14
+§8), the RS-016 `PreviewAction`/`ConfirmAction` IPC wiring, the RS-018
+cooldown/stale-input trip, real trace capture from live observations,
+and RS-024 Stage B comparison over dry-run logs.
+
+**Environment:** same machine/toolchain as prior entries (Windows 11
+build 26200.9711, standard user, Rust 1.93.1); no new dependencies. The
+AT-06 soak attempt 3 was running throughout and is unaffected.

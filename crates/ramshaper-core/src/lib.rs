@@ -20,6 +20,7 @@ pub mod history;
 pub mod identity;
 pub mod ipc;
 pub mod journal;
+pub mod policy;
 pub mod pressure;
 pub mod process;
 pub mod render;
@@ -50,6 +51,12 @@ pub use journal::{
     reconcile, retention, transition, ActionIntent, ActionState, Event, Observed, Property,
     ReconcileDecision, Retention, TransitionError, ACTION_KIND_CPU_PRIORITY,
     JOURNAL_SCHEMA_VERSION,
+};
+pub use policy::{
+    dry_run, DryRunConfig, DryRunLog, DryRunSummary, NoActionReason, PolicyDecision,
+    PolicyRuleError, PolicyRules, ResolveCause, StepDecision, TargetObservation, TraceStep,
+    DEFAULT_TTL_MS, DRY_RUN_SCHEMA, MAX_TTL_MS, MIN_TTL_MS, POLICY_RULES_VERSION,
+    PREVIEW_VALIDITY_MS,
 };
 pub use pressure::{
     missing_inputs as missing_pressure_inputs, EvidenceQuality, PressureClassifier, PressureInput,
