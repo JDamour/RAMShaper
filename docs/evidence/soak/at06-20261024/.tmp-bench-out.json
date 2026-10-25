@@ -1,23 +1,23 @@
 {
   "schema": "ramshaper.observer_overhead.v1",
-  "measured_at_utc": "2026-10-24T17:08:05.464Z",
+  "measured_at_utc": "2026-10-24T20:18:03.395Z",
   "tool": "ramshaper-bench 0.1.0",
   "iterations": 500,
   "system_snapshot": {
     "samples": 500,
-    "min_ms": 0.0797,
-    "p50_ms": 0.0925,
-    "p95_ms": 0.1763,
-    "max_ms": 0.4345
+    "min_ms": 0.07229999999999999,
+    "p50_ms": 0.0809,
+    "p95_ms": 0.1217,
+    "max_ms": 0.4208
   },
   "process_scan": {
     "samples": 500,
-    "min_ms": 26.7586,
-    "p50_ms": 40.751000000000005,
-    "p95_ms": 50.053,
-    "max_ms": 59.6402
+    "min_ms": 21.4741,
+    "p50_ms": 37.4801,
+    "p95_ms": 48.5135,
+    "max_ms": 57.9748
   },
-  "process_count_last": 490,
+  "process_count_last": 501,
   "bench_self_working_set_bytes": 5132288,
   "bench_self_private_commit_bytes": 1388544,
   "os": {

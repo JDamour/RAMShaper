@@ -777,6 +777,81 @@ semantics are a G3 eligibility concern and deliberately not defined here.
 
 ---
 
+# RS-010 continuation — visibility-aware pausing (doc 06 hidden-window rule), 2026-10-24
+
+**Gap closed:** the post-GO addendum recorded that a minimized window does
+not trim and keeps 1 Hz updates — required G2 work. Implemented in
+`ramshaper-ui`: a plain std::thread polls `IsIconic` on the window every
+500 ms (new `ramshaper-windows::window` module — `FindWindowW` by title +
+`IsIconic`, the workspace's `Win32_UI_WindowsAndMessaging` feature added;
+unsafe FFI stays in `ramshaper-windows` per the audited-boundary rule) and
+sets a shared flag. While minimized: subscribe pushes are skipped (the
+stream is still drained — the agent's bounded subscriber queue would
+otherwise mark gaps), probe-poll mode sends nothing at all, the freshness
+ticker skips its label update (the stale flag recomputes truthfully from
+the same timestamp on restore), and the Applications fetch is gated.
+State transitions (connect/disconnect) still update the UI — they are rare,
+not high-frequency. Transitions are logged to stderr.
+
+**Measured** (`measure-vispause.ps1` → `vispause-measure.txt`,
+`vispause-ui.log`, agent on a dedicated pipe): minimize → CPU **exactly
+zero** for the paused window (0.484 → 0.484 CPU-s across 9 s) and flat
+working set (28.0 MiB); restore → `window restored: UI updates resumed`
+logged within one poll tick, updates live again (post-restore 8 s delta
+0.125 CPU-s includes the restore repaint catch-up).
+
+**Defect found and fixed during this slice:** the first implementation
+polled `Window::is_minimized()` from a **Slint timer on the event loop** —
+the loop stops waking while the window is occluded, so the restore was
+never seen and the UI stayed paused permanently (post-restore 8 s delta
+0.000, reproduced twice). Slint timers cannot detect their own
+un-occlusion. The plain-thread + FFI design is event-loop independent.
+
+**Limits:** the window is located by exact title (`RAMShaper`), so two
+simultaneously running UIs cannot be distinguished (single instance per
+session is the design); the restore repaint causes a one-off CPU catch-up
+(0.125 CPU-s over the first 8 s) before the ~0.6 % steady rate; release
+`ramshaper-cli.exe` rebuild still deferred (soak lock).
+
+---
+
+# RS-012 UI portion — Profiles page + additive GetConfig, 2026-10-24
+
+**Scope implemented:** the UI half of the M2 "inert profiles" milestone item.
+Additive protocol-v1 command `GetConfig` (same pattern as RS-011's
+`GetProcesses`): serves the loaded configuration's inert summary — `mode`,
+`profile` (the active preset), `exclusions` and an explicit inertness note —
+never the whole config file; unknown-command agents answer `Unsupported`.
+The agent builds a `ConfigSummary` from the loaded configuration at serve
+time (per-agent static material, delivered to connection workers like the
+capability payload). The UI gained a **Profiles** page (nav item, `--page
+profiles`): "Current profile: <preset>" plus the five presets from doc 06
+§S04 with the active one marked and an inertness note, and the Overview
+header now shows `profile: <preset>` (doc 06 §1 "Current Profile"). Nothing
+on the page switches anything: selection lives in the configuration file or
+`config import`; the page is display-only (Observe Only).
+
+**Tests:** +3 dispatch unit tests (GetConfig serves the summary; summary
+builds from a parsed config; existing contexts extended), +1 real-pipe
+integration test (GetConfig over the wire incl. version-mismatch
+rejection). Workspace at record time: **211 tests, 0 failed**, fmt and
+clippy (`-D warnings`) clean.
+
+**Live demo** (`docs/evidence/2026-10-24-rs012-profiles-ui/`): agent serving
+`demo-config.toml` (`profiles.active = "low_ram"`, exclusions
+`obs64.exe`/`Audacity.exe`); `ramshaper-agent probe --request GetConfig`
+returns `{mode: observe_only, profile: low_ram, exclusions: […], note: …}`;
+the UI Profiles page screenshot shows `Current profile: low_ram` with
+**Low-RAM (active)** marked among the five presets.
+
+**Limits:** the config is fetched on the Profiles-page-visible poll and once
+at startup for the Overview indicator — a config *edit while the agent runs*
+is not reflected until the agent restarts (the agent reads its configuration
+at serve time; live reload does not exist in this slice); per-process
+exclusion matching semantics remain a G3 concern.
+
+---
+
 # CLI defect: `--interval-ms` ignored for `low-memory-watch` (found + fixed), 2026-10-24
 
 **Found while setting up the AT-06 24-hour soak:** launching
@@ -916,3 +991,75 @@ argument. AT-23 remains open as a whole (journal, installer, uninstall
 report, closed-alpha portions belong to G3+); what is recorded here is the
 G2-applicable offline/privacy boundary review, **Passed** with the stated
 boundaries.
+
+---
+
+# AT-19 — programmatic contrast audit + button restyle, 2026-10-24
+
+**Scope:** the machine-checkable half of the AT-19 contrast obligation
+(WCAG 1.4.3 text, 1.4.11 non-text boundaries). The interactive Narrator/DPI
+pass remains open as recorded.
+
+**Implementation:** a test in `ramshaper-ui` computes WCAG 2.x relative
+luminance and contrast ratios (validated against published check values:
+black/white = 21.0, #767676 on white ≈ 4.54) over **15 audited
+foreground/background pairs** covering body text, secondary/footnote text,
+the nav sidebar (three text colors on navy), the mode chip, active nav, the
+CTA line, the new palette buttons (active and inactive faces plus the
+inactive border as a 3:1 non-text boundary) and the two large-text status
+glyphs (OK/ATTN at 26 px weight 800 → 3.0 large-text minimum). The palette
+values are **parsed live from `ui/app-window.slint`** at test time, so a
+token edit that breaks contrast fails the build rather than drifting.
+
+**What the audit found and what changed:**
+
+1. `warning` **#B87513 failed 4.5:1** on the page background (3.56:1) —
+   used at 12 px for the stale-freshness label. Darkened to **#9C6200**
+   (4.78:1); the 3 px stale stripe and the 26 px ATTN glyph keep the token
+   (still ≥ 3.0 everywhere it is used).
+2. The stock Fluent `Button` rendered nearly invisible on the light page
+   background (observed in the RS-011 screenshots — the sort row and the
+   Quit button were pale ghosts). Replaced with a `PaletteButton` built
+   from audited tokens (card background + primary text inactive; accent
+   background + white text active), now used for the four sort controls and
+   Quit. Confirmed visually: the re-capture shows all five buttons clearly
+   and the CPU sort button in its active accent state with the table
+   re-sorted (`target/rs011/rs011-applications.png`).
+
+**Status:** `cargo test -p ramshaper-ui` 11 passed / 0 failed (2 new audit
+tests). Remaining AT-19 work is the human pass: Narrator reading quality,
+1366×768, and the 100/125/150/200 % DPI matrix.
+
+## Workspace repair note — 2026-10-24 (concurrent session's in-flight file)
+
+`ramshaper-windows/src/window.rs` (the concurrent session's new
+hidden-window probe, added after their last recorded gate run) did not
+compile — `HWND` was imported from `Win32::UI::WindowsAndMessaging` and
+`FindWindowW` was handled as a bare handle. Mechanical windows-rs 0.62
+corrections applied on their behalf: `HWND` imported from
+`Win32::Foundation`, `FindWindowW` unwrapped as a `Result` (a null OS
+return is `Err`). Their probe test (`missing_window_is_none_and_reads_not_minimized`)
+passes unchanged; `cargo test -p ramshaper-windows` 4 + 15 + … all green.
+
+## AT-06 soak — attempt 2 outcome and attempt 3 start (2026-10-25)
+
+**Attempt 2 (config-driven 60 s cadence, `target/soak/`) ran 2026-10-24
+12:39:17Z → 20:24:17Z (7 h 45 min, 467 samples, zero cadence drift) and was
+terminated by an external console-control event (exit 0x40010004) that also
+ended the concurrent 1 Hz rig (its watch.jsonl froze at the same minute)
+during a ~20:07–20:25Z kill window — consistent with an end-of-day machine
+shutdown, which no launched process survives.** Resources over the partial
+run: handle count flat at 72, working set 5.07 MB, private commit 0.79 MB
+(half-hourly samples in `attempt2-process-samples.csv`; logs archived as
+`attempt2-*`). No gaps, no truncation notes, low-memory never signaled.
+
+**Attempt 3 started 2026-10-25T07:42:12Z** (fresh boot), same config-driven
+60 s cadence, watcher PID 25280, binary refreshed to the current release
+(SHA-256 `bf783b8da009cea3e06532e5d8e5a3fbaa035f165906e90ce53e2b793ba32f96`
+— which also completes the release-binary rebuild that was deferred while
+the earlier watchers held the exe). Planned end 2026-10-26T07:42Z; the
+wrapper still stops the watcher with a real CTRL_BREAK and records the
+history summary. The concurrent session's criteria-declared rig in
+`docs/evidence/soak/at06-20261024/` (1 Hz + bench windows) was interrupted
+at the same time and has not been relaunched by this session — its owner
+should relaunch it or fold its criteria onto a shared run.

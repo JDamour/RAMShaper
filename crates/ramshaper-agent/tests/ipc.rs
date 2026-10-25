@@ -26,10 +26,16 @@ impl TestAgent {
     /// reports an early failure (surfaces real pipe errors).
     fn start(name: &str, interval_ms: u64) -> TestAgent {
         let stop = Arc::new(ManualResetEvent::new().expect("stop event"));
+        let config_summary = ramshaper_agent::dispatch::ConfigSummary {
+            mode: "observe_only".to_string(),
+            profile: "balanced".to_string(),
+            exclusions: Vec::new(),
+        };
         let handle = serve(
             Arc::clone(&stop),
             format!(r"\\.\pipe\{name}"),
             WatchConfig::new(interval_ms).expect("cadence"),
+            config_summary,
         )
         .expect("agent serves");
         // Give the accept thread a moment; fail loudly on early errors.
@@ -313,4 +319,22 @@ fn get_processes_rejects_wrong_version_before_any_scan() {
     let response = request(&full_pipe(&pipe), &envelope(2, "GetProcesses"));
     assert_eq!(response["ok"], false, "{response}");
     assert_eq!(response["error"]["code"], "VersionMismatch");
+}
+
+#[test]
+fn get_config_over_real_pipe_serves_the_inert_summary() {
+    let pipe = format!("ramshaper-test-cfg-{}", std::process::id());
+    let _agent = TestAgent::start(&pipe, 500);
+    std::thread::sleep(Duration::from_millis(200));
+    let response = request(&full_pipe(&pipe), &envelope(1, "GetConfig"));
+    assert_eq!(response["ok"], true, "{response}");
+    let data = &response["data"];
+    assert_eq!(data["mode"], "observe_only");
+    assert_eq!(data["profile"], "balanced");
+    assert_eq!(data["exclusions"], serde_json::json!([]));
+    assert!(data["note"].as_str().is_some_and(|n| n.contains("inert")));
+    // Wrong version is still rejected before dispatch.
+    let bad = request(&full_pipe(&pipe), &envelope(2, "GetConfig"));
+    assert_eq!(bad["ok"], false, "{bad}");
+    assert_eq!(bad["error"]["code"], "VersionMismatch");
 }

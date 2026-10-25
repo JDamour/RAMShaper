@@ -29,3 +29,22 @@
 2026-10-24T16:48:01Z window=26 ok scan_p50=33.960 scan_p95=39.699 snap_p50=0.092 procs=465 bench_ws=5132288 watch_ws=5181440
 2026-10-24T16:58:02Z window=27 ok scan_p50=36.598 scan_p95=43.396 snap_p50=0.063 procs=481 bench_ws=5144576 watch_ws=5181440
 2026-10-24T17:08:05Z window=28 ok scan_p50=40.751 scan_p95=50.053 snap_p50=0.092 procs=490 bench_ws=5132288 watch_ws=5181440
+2026-10-24T17:18:04Z window=29 ok scan_p50=39.164 scan_p95=50.115 snap_p50=0.089 procs=499 bench_ws=4960256 watch_ws=5181440
+2026-10-24T17:28:17Z window=30 ok scan_p50=57.534 scan_p95=108.717 snap_p50=0.244 procs=521 bench_ws=5095424 watch_ws=4952064
+2026-10-24T17:38:10Z window=31 ok scan_p50=49.650 scan_p95=62.243 snap_p50=0.125 procs=510 bench_ws=5152768 watch_ws=4952064
+2026-10-24T17:47:44Z window=32 FAILED exit=None
+2026-10-24T17:58:04Z window=33 ok scan_p50=38.962 scan_p95=52.086 snap_p50=0.095 procs=491 bench_ws=5033984 watch_ws=4952064
+2026-10-24T18:08:01Z window=34 ok scan_p50=34.522 scan_p95=43.268 snap_p50=0.079 procs=490 bench_ws=5144576 watch_ws=4952064
+2026-10-24T18:18:02Z window=35 ok scan_p50=34.874 scan_p95=41.226 snap_p50=0.091 procs=502 bench_ws=5156864 watch_ws=4952064
+2026-10-24T18:28:03Z window=36 ok scan_p50=37.060 scan_p95=46.999 snap_p50=0.069 procs=502 bench_ws=5132288 watch_ws=4952064
+2026-10-24T18:38:03Z window=37 ok scan_p50=37.238 scan_p95=47.261 snap_p50=0.089 procs=504 bench_ws=5136384 watch_ws=4952064
+2026-10-24T18:48:01Z window=38 ok scan_p50=34.674 scan_p95=39.782 snap_p50=0.061 procs=495 bench_ws=5132288 watch_ws=4952064
+2026-10-24T18:57:44Z window=39 FAILED exit=None
+2026-10-24T19:08:06Z window=40 ok scan_p50=40.837 scan_p95=58.587 snap_p50=0.101 procs=511 bench_ws=5169152 watch_ws=4952064
+2026-10-24T19:17:44Z window=41 FAILED exit=None
+2026-10-24T19:28:08Z window=42 ok scan_p50=45.302 scan_p95=64.332 snap_p50=0.201 procs=496 bench_ws=5124096 watch_ws=4952064
+2026-10-24T19:38:01Z window=43 ok scan_p50=35.592 scan_p95=42.595 snap_p50=0.069 procs=491 bench_ws=5144576 watch_ws=4952064
+2026-10-24T19:48:01Z window=44 ok scan_p50=35.535 scan_p95=41.380 snap_p50=0.065 procs=493 bench_ws=5140480 watch_ws=4952064
+2026-10-24T19:58:05Z window=45 ok scan_p50=40.011 scan_p95=51.027 snap_p50=0.137 procs=500 bench_ws=5140480 watch_ws=4952064
+2026-10-24T20:07:44Z window=46 FAILED exit=None
+2026-10-24T20:18:03Z window=47 ok scan_p50=37.480 scan_p95=48.514 snap_p50=0.081 procs=501 bench_ws=5132288 watch_ws=4952064

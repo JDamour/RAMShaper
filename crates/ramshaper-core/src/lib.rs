@@ -18,6 +18,7 @@ pub mod envelope;
 pub mod history;
 pub mod identity;
 pub mod ipc;
+pub mod journal;
 pub mod pressure;
 pub mod process;
 pub mod render;
@@ -38,6 +39,11 @@ pub use config::{
 pub use envelope::{LowMemorySignal, MetricEnvelope};
 pub use history::{BoundedHistory, HistoryStats, DEFAULT_BYTE_BUDGET, DEFAULT_RETENTION_MS};
 pub use identity::{IdentityVerification, ProcessIdentity};
+pub use journal::{
+    reconcile, retention, transition, ActionIntent, ActionState, Event, Observed, Property,
+    ReconcileDecision, Retention, TransitionError, ACTION_KIND_CPU_PRIORITY,
+    JOURNAL_SCHEMA_VERSION,
+};
 pub use pressure::{
     missing_inputs as missing_pressure_inputs, EvidenceQuality, PressureClassifier, PressureInput,
     PressureLevel, PressureObservation, PRESSURE_INPUTS, PRESSURE_RULE_VERSION,

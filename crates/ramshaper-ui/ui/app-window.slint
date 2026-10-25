@@ -78,6 +78,9 @@ export global UiState {
     // Applications page (RS-011): rows come from the agent's GetProcesses.
     in-out property <[ProcessRow]> process-rows;
     in-out property <string> process-note: "Waiting for the first process table…";
+    // Profiles page (RS-012 UI portion): the inert selection from GetConfig.
+    in-out property <string> current-profile: "unavailable";
+    in-out property <string> config-note: "Waiting for the agent…";
     // Mirror of the Rust-side sort key, for the active button state.
     in-out property <string> process-sort: "working-set";
     callback navigate(string);
@@ -299,6 +302,90 @@ component ApplicationsPage inherits Rectangle {
     }
 }
 
+// RS-012 Profiles page: the five inert presets with the active selection
+// from the agent's GetConfig. Nothing here switches anything — selection
+// lives in the configuration file or config import.
+component PresetRow inherits Rectangle {
+    in property <string> name;
+    in property <bool> active;
+    height: 26px;
+    HorizontalLayout {
+        spacing: 12px;
+        Text {
+            text: root.name + (root.active ? "  (active)" : "");
+            color: root.active ? Palette.accent : Palette.text-primary;
+            font-size: 13px;
+            font-weight: root.active ? 700 : 400;
+            vertical-alignment: center;
+            width: 190px;
+        }
+        Text {
+            text: "Shares the standard defaults: pressure rule pressure_v1, no actions (observe only).";
+            color: Palette.text-secondary;
+            font-size: 12px;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            wrap: word-wrap;
+        }
+    }
+    accessible-role: text;
+    accessible-label: "Profile preset " + root.name + (root.active ? ", active. " : ". ")
+        + "Shares the standard defaults; selecting a profile never enables actions.";
+}
+
+component ProfilesPage inherits Rectangle {
+    VerticalLayout {
+        spacing: 10px;
+        Text {
+            text: "Current profile: " + UiState.current-profile;
+            color: Palette.text-primary;
+            font-size: 15px;
+            font-weight: 700;
+            accessible-role: text;
+            accessible-label: "Current profile: " + UiState.current-profile;
+        }
+        // Fixed-height card: a stretched card pushes the preset rows to the
+        // bottom (Slint distributes spare VerticalLayout space).
+        Rectangle {
+            height: 240px;
+            background: Palette.card-background;
+            border-radius: 10px;
+            accessible-role: groupbox;
+            accessible-label: "Profile presets";
+            accessible-description: "The five profile presets; all share the same defaults in this build.";
+            VerticalLayout {
+                padding: 18px;
+                spacing: 8px;
+                Text {
+                    text: "Profile presets";
+                    color: Palette.text-primary;
+                    font-size: 16px;
+                    font-weight: 700;
+                }
+                PresetRow { name: "Balanced"; active: UiState.current-profile == "balanced"; }
+                PresetRow { name: "Low-RAM"; active: UiState.current-profile == "low_ram"; }
+                PresetRow { name: "Focus"; active: UiState.current-profile == "focus"; }
+                PresetRow { name: "Gaming/Observe"; active: UiState.current-profile == "gaming_observe"; }
+                PresetRow { name: "Custom"; active: UiState.current-profile == "custom"; }
+            }
+        }
+        Text {
+            text: "Profiles are inert in this build: selecting or displaying a profile never changes a process setting and never enables an action. Switching presets happens in the configuration file or via config import; the change appears here.";
+            color: Palette.text-secondary;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+        Text {
+            text: UiState.config-note;
+            color: Palette.text-secondary;
+            font-size: 12px;
+            wrap: word-wrap;
+            accessible-role: text;
+            accessible-label: "Configuration status: " + UiState.config-note;
+        }
+    }
+}
+
 export component AppWindow inherits Window {
     title: "RAMShaper";
     min-width: 1024px;
@@ -347,9 +434,15 @@ export component AppWindow inherits Window {
                         UiState.navigate("applications");
                     }
                 }
-                // Managed App Groups, Profiles, Insights and the Actions Log
-                // arrive with their gated slices and are hidden in this
-                // build.
+                NavItem {
+                    label: "Profiles";
+                    active: UiState.current-page == "profiles";
+                    clicked => {
+                        UiState.navigate("profiles");
+                    }
+                }
+                // Managed App Groups, Insights and the Actions Log arrive
+                // with their gated slices and are hidden in this build.
                 Rectangle { vertical-stretch: 1; }
                 Rectangle {
                     height: 34px;
@@ -397,6 +490,14 @@ export component AppWindow inherits Window {
                     vertical-alignment: center;
                     accessible-role: text;
                     accessible-label: "Serving agent instance: " + UiState.agent-instance;
+                }
+                Text {
+                    text: "profile: " + UiState.current-profile;
+                    color: Palette.text-secondary;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    accessible-role: text;
+                    accessible-label: "Current profile: " + UiState.current-profile;
                 }
                 Text {
                     text: UiState.updated-ago;
@@ -509,6 +610,11 @@ export component AppWindow inherits Window {
 
             // Applications page (RS-011): the agent's process inventory.
             if UiState.current-page == "applications": ApplicationsPage {
+                vertical-stretch: 1;
+            }
+
+            // Profiles page (RS-012): the five inert presets + the active one.
+            if UiState.current-page == "profiles": ProfilesPage {
                 vertical-stretch: 1;
             }
         }

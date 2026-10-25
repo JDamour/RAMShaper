@@ -271,7 +271,8 @@ fn serve_command(
     });
 
     eprintln!("serving {TOOL_NAME} {VERSION} on {name} (interval {cadence} ms); Ctrl+C to stop");
-    match ramshaper_agent::server::serve(Arc::clone(&stop), name, watch_config) {
+    let config_summary = ramshaper_agent::dispatch::ConfigSummary::from_config(&config);
+    match ramshaper_agent::server::serve(Arc::clone(&stop), name, watch_config, config_summary) {
         Ok(handle) => {
             eprintln!("agent {} listening; collector running", handle.instance_id);
             // serve() returns immediately; block until stop, then join the

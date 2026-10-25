@@ -6,9 +6,11 @@
 //! acknowledges and lets the connection layer switch to streaming.
 
 use ramshaper_core::ipc::{
-    ErrorCode, RequestEnvelope, Response, COMMAND_GET_CAPABILITIES, COMMAND_GET_PROCESSES,
-    COMMAND_GET_SNAPSHOT, COMMAND_LIST_ACTIONS, COMMAND_SUBSCRIBE_SNAPSHOTS, PROTOCOL_VERSION,
+    ErrorCode, RequestEnvelope, Response, COMMAND_GET_CAPABILITIES, COMMAND_GET_CONFIG,
+    COMMAND_GET_PROCESSES, COMMAND_GET_SNAPSHOT, COMMAND_LIST_ACTIONS, COMMAND_SUBSCRIBE_SNAPSHOTS,
+    PROTOCOL_VERSION,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 /// Everything dispatch needs to answer a request.
@@ -27,6 +29,36 @@ pub struct DispatchContext<'a> {
     /// Fresh `GetProcesses` material for this one request (RS-011): the
     /// connection handler collects it on demand just before dispatch.
     pub processes: ProcessesContext<'a>,
+    /// The serving agent's configuration summary (RS-012 UI portion): the
+    /// inert mode/profile/exclusions material `GetConfig` serves. Built once
+    /// from the loaded configuration at agent start.
+    pub config: ConfigSummary,
+}
+
+/// The configuration material `GetConfig` serves (RS-012 UI portion): the
+/// startup mode, the inert profile selection and the user exclusions. The
+/// profile is a label — selecting or displaying it never grants permission
+/// to write process settings (contract 14 §5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigSummary {
+    /// Startup mode; only `observe_only` exists in this slice.
+    pub mode: String,
+    /// Active profile preset name (one of `ramshaper_core::config::PROFILES`).
+    pub profile: String,
+    /// User exclusion entries, stored verbatim.
+    pub exclusions: Vec<String>,
+}
+
+impl ConfigSummary {
+    /// Build the summary from a validated configuration.
+    #[must_use]
+    pub fn from_config(config: &ramshaper_core::config::CoreConfig) -> Self {
+        Self {
+            mode: config.mode.clone(),
+            profile: config.profiles.active.clone(),
+            exclusions: config.exclusions.processes.clone(),
+        }
+    }
 }
 
 /// The process-inventory material a dispatch sees for `GetProcesses`.
@@ -112,6 +144,16 @@ pub fn dispatch(envelope: &RequestEnvelope, context: &DispatchContext<'_>) -> Re
             context.instance_id,
             json!({ "actions": [], "note": "no policy actions exist in this build (observe only)" }),
         ),
+        COMMAND_GET_CONFIG => Response::ok(
+            &envelope.request_id,
+            context.instance_id,
+            json!({
+                "mode": context.config.mode,
+                "profile": context.config.profile,
+                "exclusions": context.config.exclusions,
+                "note": "profiles and exclusions are inert in this build; they never enable actions",
+            }),
+        ),
         COMMAND_GET_PROCESSES => match context.processes {
             ProcessesContext::Ready(inventory) => {
                 Response::ok(&envelope.request_id, context.instance_id, inventory.clone())
@@ -166,6 +208,7 @@ mod tests {
             max_age_ms: 2000,
             now_monotonic_ms: 0,
             processes: ProcessesContext::NotSupported,
+            config: config_summary(),
         };
         let response = dispatch(&envelope(2, "GetSnapshot"), &ctx);
         assert!(!response.ok);
@@ -183,6 +226,7 @@ mod tests {
             max_age_ms: 2000,
             now_monotonic_ms: 0,
             processes: ProcessesContext::NotSupported,
+            config: config_summary(),
         };
         let caps = dispatch(&envelope(1, "GetCapabilities"), &ctx);
         assert!(caps.ok);
@@ -211,6 +255,7 @@ mod tests {
             max_age_ms: 2_000,
             now_monotonic_ms: 5_500,
             processes: ProcessesContext::NotSupported,
+            config: config_summary(),
         };
         let response = dispatch(&envelope(1, "GetSnapshot"), &ctx);
         assert!(response.ok);
@@ -233,6 +278,7 @@ mod tests {
             max_age_ms: 2_000,
             now_monotonic_ms: 9_000,
             processes: ProcessesContext::NotSupported,
+            config: config_summary(),
         };
         let response = dispatch(&envelope(1, "GetSnapshot"), &ctx);
         assert!(!response.ok);
@@ -248,6 +294,7 @@ mod tests {
             max_age_ms: 2_000,
             now_monotonic_ms: 0,
             processes: ProcessesContext::NotSupported,
+            config: config_summary(),
         };
         let response = dispatch(&envelope(1, "GetSnapshot"), &none_ctx);
         assert!(!response.ok);
@@ -266,6 +313,7 @@ mod tests {
             max_age_ms: 2000,
             now_monotonic_ms: 0,
             processes: ProcessesContext::NotSupported,
+            config: config_summary(),
         };
         let sub = dispatch(&envelope(1, "SubscribeSnapshots"), &ctx);
         assert!(sub.ok);
@@ -286,6 +334,7 @@ mod tests {
             max_age_ms: 2000,
             now_monotonic_ms: 0,
             processes: ProcessesContext::NotSupported,
+            config: config_summary(),
         };
         let response = dispatch(&envelope(1, "GetCapabilities"), &ctx);
         assert_eq!(response.request_id, "r-1");
@@ -305,6 +354,7 @@ mod tests {
             max_age_ms: 2000,
             now_monotonic_ms: 0,
             processes: ProcessesContext::Ready(&inventory),
+            config: config_summary(),
         };
         let response = dispatch(&envelope(1, "GetProcesses"), &ctx);
         assert!(response.ok);
@@ -322,6 +372,7 @@ mod tests {
             max_age_ms: 2000,
             now_monotonic_ms: 0,
             processes: ProcessesContext::Failed("scan failed: OS error 299"),
+            config: config_summary(),
         };
         let response = dispatch(&envelope(1, "GetProcesses"), &ctx);
         assert!(!response.ok);
@@ -329,6 +380,55 @@ mod tests {
         assert_eq!(error.code, ErrorCode::OsError);
         assert!(error.retryable);
         assert!(error.message.contains("299"));
+    }
+
+    fn config_summary() -> ConfigSummary {
+        ConfigSummary {
+            mode: "observe_only".to_string(),
+            profile: "balanced".to_string(),
+            exclusions: vec!["obs64.exe".to_string()],
+        }
+    }
+
+    #[test]
+    fn get_config_serves_the_inert_summary() {
+        let ctx = DispatchContext {
+            instance_id: "agent-1",
+            capabilities: capabilities(),
+            latest: None,
+            max_age_ms: 2000,
+            now_monotonic_ms: 0,
+            processes: ProcessesContext::NotSupported,
+            config: ConfigSummary {
+                mode: "observe_only".to_string(),
+                profile: "low_ram".to_string(),
+                exclusions: vec![],
+            },
+        };
+        let response = dispatch(&envelope(1, "GetConfig"), &ctx);
+        assert!(response.ok);
+        let data = response.data.expect("data");
+        assert_eq!(data["mode"], "observe_only");
+        assert_eq!(data["profile"], "low_ram");
+        assert_eq!(data["exclusions"], json!([]));
+        assert!(data["note"].as_str().expect("note").contains("inert"));
+    }
+
+    #[test]
+    fn get_config_summary_builds_from_a_config() {
+        let config = ramshaper_core::config::CoreConfig::parse(
+            "schema_version = 1
+[profiles]
+active = \"focus\"
+[exclusions]
+processes = [\"a.exe\"]
+",
+        )
+        .expect("valid");
+        let summary = ConfigSummary::from_config(&config);
+        assert_eq!(summary.mode, "observe_only");
+        assert_eq!(summary.profile, "focus");
+        assert_eq!(summary.exclusions, ["a.exe"]);
     }
 
     #[test]
@@ -340,6 +440,7 @@ mod tests {
             max_age_ms: 2000,
             now_monotonic_ms: 0,
             processes: ProcessesContext::NotSupported,
+            config: config_summary(),
         };
         let response = dispatch(&envelope(1, "GetProcesses"), &ctx);
         assert!(!response.ok);

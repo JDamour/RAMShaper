@@ -30,5 +30,6 @@ pub mod perfinfo;
 pub mod pipe;
 pub mod processes;
 pub mod token;
+pub mod window;
 
 pub use monitor::{agent_instance_id, WindowsSystemMonitor};

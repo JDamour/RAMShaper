@@ -1,0 +1,20 @@
+[package]
+name = "ramshaper-journal"
+description = "SQLite action journal (RS-031): durable intent, versioned schema, pinning and quota"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ramshaper-core = { workspace = true }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

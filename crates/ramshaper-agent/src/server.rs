@@ -21,7 +21,7 @@ use ramshaper_core::snapshot::{SnapshotInputs, SystemSnapshot, ToolInfo};
 use ramshaper_core::watch::{run_watch, WaitHandle, WatchConfig};
 use ramshaper_platform::ReadOnlySystemMonitor as _;
 
-use crate::dispatch::{dispatch, DispatchContext, LatestSnapshot, ProcessesContext};
+use crate::dispatch::{dispatch, ConfigSummary, DispatchContext, LatestSnapshot, ProcessesContext};
 
 /// Maximum simultaneously served connections (bounded memory).
 pub const MAX_CONNECTIONS: usize = 8;
@@ -260,6 +260,7 @@ pub fn serve(
     stop: Arc<ramshaper_windows::event::ManualResetEvent>,
     pipe_name: String,
     config: WatchConfig,
+    config_summary: ConfigSummary,
 ) -> Result<AgentHandle, String> {
     let instance_id = ramshaper_windows::agent_instance_id();
 
@@ -334,6 +335,7 @@ pub fn serve(
         let accept_id = instance_id.clone();
         let accept_sid = sid.0.clone();
         let accept_caps = capabilities;
+        let accept_config = config_summary;
         let accept_sd = security_descriptor;
         std::thread::Builder::new()
             .name("ramshaper-accept".to_string())
@@ -352,6 +354,7 @@ pub fn serve(
                     our_session,
                     instance_id: accept_id,
                     capabilities: accept_caps,
+                    config_summary: accept_config,
                     shared: accept_shared,
                     active: accept_active,
                     process_provider: ProcessInventoryProvider {
@@ -391,6 +394,7 @@ struct AcceptContext<'a> {
     our_session: u32,
     instance_id: String,
     capabilities: serde_json::Value,
+    config_summary: ConfigSummary,
     shared: Arc<Shared>,
     active: Arc<AtomicUsize>,
     process_provider: ProcessInventoryProvider,
@@ -405,6 +409,7 @@ fn accept_loop(ctx: AcceptContext<'_>) -> Result<(), String> {
         our_session,
         instance_id,
         capabilities,
+        config_summary,
         shared,
         active,
         process_provider,
@@ -415,6 +420,7 @@ fn accept_loop(ctx: AcceptContext<'_>) -> Result<(), String> {
     let our_sid: &str = &our_sid;
     let instance_id: &str = &instance_id;
     let capabilities: &serde_json::Value = &capabilities;
+    let config_summary: &ConfigSummary = &config_summary;
     let shared: &Arc<Shared> = &shared;
     let active: &Arc<AtomicUsize> = &active;
     let mut first = true;
@@ -483,16 +489,18 @@ fn accept_loop(ctx: AcceptContext<'_>) -> Result<(), String> {
         let worker_shared = Arc::clone(shared);
         let worker_active = Arc::clone(active);
         let worker_stop = Arc::clone(stop);
-        let worker_id = instance_id.to_string();
-        let worker_caps = capabilities.clone();
+        let worker_material = ConnectionMaterial {
+            instance_id: instance_id.to_string(),
+            capabilities: capabilities.clone(),
+            config_summary: config_summary.clone(),
+        };
         let worker_processes = process_provider.clone();
         let worker = std::thread::Builder::new()
             .name("ramshaper-connection".to_string())
             .spawn(move || {
                 handle_connection(
                     instance,
-                    worker_id,
-                    worker_caps,
+                    worker_material,
                     worker_shared,
                     worker_stop,
                     next_subscriber_id,
@@ -569,10 +577,17 @@ fn pressure_input_for(snapshot: &SystemSnapshot) -> Option<PressureInput> {
 /// Serve one connected client: request/response until error, or a snapshot
 /// stream after `SubscribeSnapshots`.
 #[cfg(windows)]
-fn handle_connection(
-    instance: ramshaper_windows::handle::OwnedHandle,
+/// Per-agent static material handed to every connection worker: identity,
+/// the capability payload and the `GetConfig` summary (RS-030/011/012).
+struct ConnectionMaterial {
     instance_id: String,
     capabilities: serde_json::Value,
+    config_summary: ConfigSummary,
+}
+
+fn handle_connection(
+    instance: ramshaper_windows::handle::OwnedHandle,
+    material: ConnectionMaterial,
     shared: Arc<Shared>,
     stop: Arc<ramshaper_windows::event::ManualResetEvent>,
     subscriber_id: u64,
@@ -587,7 +602,7 @@ fn handle_connection(
                 // could not be correlated to a request id).
                 let response = Response::error(
                     "",
-                    &instance_id,
+                    &material.instance_id,
                     ErrorCode::Unsupported,
                     "malformed request frame".to_string(),
                 );
@@ -628,12 +643,13 @@ fn handle_connection(
                 Scanned::NotRequested => ProcessesContext::NotSupported,
             };
             let context = DispatchContext {
-                instance_id: &instance_id,
-                capabilities: capabilities.clone(),
+                instance_id: &material.instance_id,
+                capabilities: material.capabilities.clone(),
                 latest,
                 max_age_ms: shared.interval_ms.saturating_mul(2),
                 now_monotonic_ms: ramshaper_core::SystemClock.monotonic_ms(),
                 processes,
+                config: material.config_summary.clone(),
             };
             dispatch(&envelope, &context)
         };
@@ -645,7 +661,13 @@ fn handle_connection(
             break;
         }
         if subscribing {
-            stream_snapshots(&instance, &instance_id, &shared, &stop, subscriber_id);
+            stream_snapshots(
+                &instance,
+                &material.instance_id,
+                &shared,
+                &stop,
+                subscriber_id,
+            );
             break; // subscription owns the connection until it ends
         }
     }

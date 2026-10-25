@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/ramshaper-core",
+    "crates/ramshaper-journal",
     "crates/ramshaper-platform",
     "crates/ramshaper-windows",
     "crates/ramshaper-cli",
@@ -18,6 +19,7 @@ publish = false
 
 [workspace.dependencies]
 ramshaper-core = { path = "crates/ramshaper-core" }
+ramshaper-journal = { path = "crates/ramshaper-journal" }
 ramshaper-platform = { path = "crates/ramshaper-platform" }
 ramshaper-windows = { path = "crates/ramshaper-windows" }
 ramshaper-agent = { path = "crates/ramshaper-agent" }
@@ -43,6 +45,7 @@ windows = { version = "=0.62.2", features = [
     "Win32_System_RemoteDesktop",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
     "Win32_Storage_FileSystem",
     "Wdk_System_SystemServices",
 ] }

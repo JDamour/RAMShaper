@@ -79,11 +79,15 @@ pub struct RequestEnvelope {
 /// Read-only commands of protocol v1. `GetProcesses` is additive (RS-011):
 /// agents older than its introduction answer `Unsupported`, which clients
 /// treat as an empty table with an explanation, never as data.
+/// `GetConfig` is additive the same way (RS-012 UI portion): the inert
+/// profile selection, mode and user exclusions of the serving agent's
+/// configuration.
 pub const COMMAND_GET_CAPABILITIES: &str = "GetCapabilities";
 pub const COMMAND_GET_SNAPSHOT: &str = "GetSnapshot";
 pub const COMMAND_SUBSCRIBE_SNAPSHOTS: &str = "SubscribeSnapshots";
 pub const COMMAND_LIST_ACTIONS: &str = "ListActions";
 pub const COMMAND_GET_PROCESSES: &str = "GetProcesses";
+pub const COMMAND_GET_CONFIG: &str = "GetConfig";
 
 /// Error body of a failed response.
 #[derive(Debug, Clone, PartialEq, Serialize)]

@@ -1,7 +1,8 @@
 [ui +    0.0s] ramshaper-ui 0.1.0; pipe \\.\pipe\rs010-vispause; mode: subscribe stream
 [ui +    0.0s] connecting…
 [ui +    0.0s] pipe connected; handshaking GetCapabilities
-[ui +    0.0s] connected: agent instance cli-30964-134373350116844524
+[ui +    0.0s] connected: agent instance cli-5140-134373373142699409
 [ui +    0.0s] subscribed; waiting for pushed snapshots
-[ui +   11.0s] window minimized: UI updates paused
-[ui +   39.2s] disconnected: snapshot stream read failed: OS error 109 from ReadFile
+[ui +   13.6s] window minimized: UI updates paused
+[ui +   25.6s] window restored: UI updates resumed
+[ui +   45.1s] disconnected: snapshot stream read failed: OS error 109 from ReadFile

@@ -56,7 +56,8 @@ OPTIONS:
                          logon session)
     --poll-ms <MS>       Poll with one-shot GetSnapshot probes every MS ms
                          instead of subscribing to the snapshot stream
-    --page <NAME>        Start page: 'overview' (default) or 'applications'
+    --page <NAME>        Start page: 'overview' (default), 'applications'
+                         or 'profiles'
 ";
 
 /// Last successful update, for the freshness ("Last updated Xs ago") label.
@@ -104,8 +105,8 @@ fn main() {
             "--page" => match args.next() {
                 Some(value) => {
                     let page = value.to_string_lossy().to_string();
-                    if page != "overview" && page != "applications" {
-                        eprintln!("error: --page must be 'overview' or 'applications'");
+                    if page != "overview" && page != "applications" && page != "profiles" {
+                        eprintln!("error: --page must be 'overview', 'applications' or 'profiles'");
                         std::process::exit(2);
                     }
                     initial_page = Some(page);
@@ -196,6 +197,7 @@ fn main() {
     app.global::<UiState<'_>>()
         .set_current_page(start_page.as_str().into());
     let fetch_in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let config_fetched = Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
         let weak = weak.clone();
         let page_state = Arc::clone(&page_state);
@@ -231,17 +233,22 @@ fn main() {
         let in_flight = Arc::clone(&fetch_in_flight);
         let pipe = pipe_name.clone();
         let minimized = Arc::clone(&minimized);
-        // One fetch at a time; skips silently while a fetch is running, the
-        // Applications page is not visible, or the window is minimized.
+        // One fetch at a time; skips silently while a fetch is running, no
+        // fetch is due (Applications page / first config), or the window is
+        // minimized. The config is fetched once for the Overview indicator
+        // and refreshed while the Profiles page is visible.
         poll_timer.start(
             slint::TimerMode::Repeated,
             Duration::from_millis(2000),
             move || {
-                let wanted = page_state
+                let page = page_state
                     .lock()
-                    .map(|guard| guard.page == "applications")
-                    .unwrap_or(false);
-                if !wanted
+                    .map(|guard| guard.page.clone())
+                    .unwrap_or_default();
+                let want_processes = page == "applications";
+                let want_config = page == "profiles"
+                    || !config_fetched.load(std::sync::atomic::Ordering::Relaxed);
+                if (!want_processes && !want_config)
                     || minimized.load(std::sync::atomic::Ordering::Relaxed)
                     || in_flight.swap(true, std::sync::atomic::Ordering::SeqCst)
                 {
@@ -250,12 +257,26 @@ fn main() {
                 let weak = weak.clone();
                 let page_state = Arc::clone(&page_state);
                 let in_flight = Arc::clone(&in_flight);
+                let config_fetched = Arc::clone(&config_fetched);
                 let pipe = pipe.clone();
                 std::thread::spawn(move || {
-                    let result = fetch_processes(&pipe);
+                    let want_processes_now = want_processes;
+                    let result = if want_processes_now {
+                        fetch_processes(&pipe)
+                    } else {
+                        fetch_config(&pipe)
+                    };
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(app) = weak.upgrade() {
-                            apply_process_result(&app, &page_state, result);
+                            if want_processes_now {
+                                apply_process_result(&app, &page_state, result);
+                            } else {
+                                if result.is_ok() {
+                                    config_fetched
+                                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                                }
+                                apply_config(&app, result);
+                            }
                         }
                         in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
                     });
@@ -264,31 +285,35 @@ fn main() {
         );
     }
 
-    // Visibility poll: sync the shared minimized flag and log transitions.
-    // The flag gates every high-frequency update path (snapshot pushes,
-    // freshness ticker, Applications fetch) so a minimized window stops
-    // driving UI work (doc 06 hidden-window rule).
-    let vis_timer = slint::Timer::default();
+    // Visibility poll on a PLAIN thread: the Slint event loop stops waking
+    // while the window is occluded, so a timer on the loop can never see the
+    // restore. IsIconic via the audited FFI wrapper is event-loop
+    // independent. The flag gates every high-frequency update path (snapshot
+    // pushes, freshness ticker, Applications fetch) so a minimized window
+    // stops driving UI work (doc 06 hidden-window rule).
     {
-        let weak = weak.clone();
         let minimized = Arc::clone(&minimized);
-        vis_timer.start(
-            slint::TimerMode::Repeated,
-            Duration::from_millis(1000),
-            move || {
-                if let Some(app) = weak.upgrade() {
-                    let now = app.window().is_minimized();
-                    let prev = minimized.swap(now, std::sync::atomic::Ordering::Relaxed);
-                    if now != prev {
-                        if now {
-                            log_event(t0, "window minimized: UI updates paused");
-                        } else {
-                            log_event(t0, "window restored: UI updates resumed");
-                        }
+        std::thread::Builder::new()
+            .name("ramshaper-visibility".to_string())
+            .spawn(move || loop {
+                std::thread::sleep(Duration::from_millis(500));
+                let Some(hwnd) = ramshaper_windows::window::find_window_by_title("RAMShaper")
+                else {
+                    // Window gone (closing): leave the flag; the process
+                    // exits with the event loop.
+                    continue;
+                };
+                let now = ramshaper_windows::window::is_iconic(hwnd);
+                let prev = minimized.swap(now, std::sync::atomic::Ordering::Relaxed);
+                if now != prev {
+                    if now {
+                        log_event(t0, "window minimized: UI updates paused");
+                    } else {
+                        log_event(t0, "window restored: UI updates resumed");
                     }
                 }
-            },
-        );
+            })
+            .expect("visibility thread");
     }
 
     app.run().expect("UI event loop");
@@ -923,6 +948,65 @@ fn fetch_processes(pipe_name: &str) -> Result<serde_json::Value, String> {
 #[cfg(not(windows))]
 fn fetch_processes(_pipe_name: &str) -> Result<serde_json::Value, String> {
     Err("the UI requires the Windows adapter".to_string())
+}
+
+/// One-shot `GetConfig` on a fresh connection (RS-012 UI portion): the
+/// serving agent's inert mode/profile/exclusions summary.
+#[cfg(windows)]
+fn fetch_config(pipe_name: &str) -> Result<serde_json::Value, String> {
+    use ramshaper_core::ipc::{RequestEnvelope, COMMAND_GET_CONFIG, PROTOCOL_VERSION};
+    use ramshaper_windows::pipe::{client_connect, read_frame, write_frame};
+
+    let client =
+        client_connect(pipe_name).map_err(|error| format!("agent not reachable ({error})"))?;
+    let envelope = RequestEnvelope {
+        protocol_version: PROTOCOL_VERSION,
+        request_id: "ui-config".to_string(),
+        agent_instance_id: None,
+        command: COMMAND_GET_CONFIG.to_string(),
+        payload: None,
+    };
+    let payload =
+        serde_json::to_vec(&envelope).map_err(|error| format!("encode failed: {error}"))?;
+    write_frame(&client, &payload).map_err(|error| format!("write failed: {error}"))?;
+    let frame = read_frame(&client).map_err(|error| format!("read failed: {error}"))?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&frame).map_err(|error| format!("malformed response: {error}"))?;
+    if value["ok"] == true {
+        Ok(value["data"].clone())
+    } else {
+        let code = value["error"]["code"].as_str().unwrap_or("unknown");
+        let message = value["error"]["message"].as_str().unwrap_or("");
+        Err(format!("{code}: {message}"))
+    }
+}
+
+#[cfg(not(windows))]
+fn fetch_config(_pipe_name: &str) -> Result<serde_json::Value, String> {
+    Err("the UI requires the Windows adapter".to_string())
+}
+
+/// Push a `GetConfig` result into the UI properties (RS-012 UI portion).
+#[cfg(windows)]
+fn apply_config(app: &AppWindow, result: Result<serde_json::Value, String>) {
+    let ui = app.global::<UiState<'_>>();
+    match result {
+        Ok(config) => {
+            ui.set_current_profile(config["profile"].as_str().unwrap_or("unknown").into());
+            ui.set_config_note(
+                format!(
+                    "Mode: {}. Exclusions stored: {}.",
+                    config["mode"].as_str().unwrap_or("unknown"),
+                    config["exclusions"].as_array().map(Vec::len).unwrap_or(0)
+                )
+                .into(),
+            );
+        }
+        Err(reason) => {
+            ui.set_current_profile("unavailable".into());
+            ui.set_config_note(format!("Profile information unavailable: {reason}").into());
+        }
+    }
 }
 
 /// One formatted screen update (all strings built here; the .slint file
