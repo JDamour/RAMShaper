@@ -1778,3 +1778,52 @@ in `docs/evidence/2026-10-26-rs020-job-spike/workspace-run.txt`. Collision
 note: the repair lands in the RS-020 session's commit because the loop
 session had moved on to `ramshaper-bench`; the loop session's 657a6f9
 record above already claimed the resolution this commit makes true.
+
+---
+
+# AT-20 — A/B analysis fixtures (RS-024 Stage B analysis half), 2026-10-26
+
+**Scope implemented:** `ramshaper-bench::analysis` (+8 tests) and the
+`analyze-ab` CLI subcommand: per-run nearest-rank **ceil** p50/p95, sample
+counts with preserved missing reasons, paired-by-block deltas
+(`100×(A−B)/A` when `A > 0`), a 10,000-resample whole-block bootstrap CI
+with a recorded seed (local SplitMix64 — no new dependency), and the four
+doc-08 outcome labels with the 5% primary threshold, the 2%/10%
+completion guardrails and the safety-failure override. **Fixture
+calculations only — no claim of real benefit**; the A/B runner that
+produces real trials stays owner-gated.
+
+**Independently verified (hand-computed fixtures):** nearest-rank edges
+(10 events → p95 = position 10, p50 = position 5; single event; empty and
+out-of-range `q`); paired percentages [+10, −5, +10, 0]% computed by hand
+and matched to 1e-9; missing values counted and their reasons carried
+verbatim while ranks are computed over valid events only; a missing
+baseline denominator yields an excluded pair (never infinity); identical
+seeds replay identical intervals.
+
+**Label decision table pinned:** strong benefit over 5 blocks →
+`validated_improvement` (interval excludes zero, confirmatory count); a
+safety failure → `regression` regardless of speed; uniform −5% over 5
+blocks → established `regression`; flat 0% over 5 blocks →
+`no_measured_improvement`; a 3-block mixed fixture whose bootstrap
+slowdown upper bound (5%) violates the 2% foreground guardrail →
+`regression` **even though exploratory** (guardrails trump small-sample
+uncertainty); a 3-block uniform +2% → exploratory `inconclusive`; the
+cohort-p95 rule (never the average of run percentiles) pinned by a pooled
+fixture.
+
+**Live evidence** (`docs/evidence/2026-10-26-at20-ab-analysis/`):
+`ramshaper-bench analyze-ab --blocks fixture-5-blocks.json --seed 42` over
+a marked-synthetic fixture (5 blocks × 20 events; baseline 100 ms with one
+preserved missing event per run; treatment 90 ms) → paired +10% ×5, CI
+[10.00, 10.00], label `validated_improvement` with the rule trail — every
+number independently derivable by hand.
+
+**Workspace gates (2026-10-26):** fmt clean; clippy workspace-wide
+`-D warnings` clean; `cargo test --workspace --locked` **343 passed,
+0 failed**.
+
+**Not in this slice (recorded, not hidden):** the A/B *runner* (bounded
+synthetic workload with stop control — needs the enabled actuator,
+owner-gated); safety/completeness accounting from a real runner; RS-024
+Stage C (wizard, export) at G5.

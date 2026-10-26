@@ -1,0 +1,20 @@
+A/B analysis (5 pairable blocks, resamples 10000, seed 42)
+  run a-1        n=19 missing=1 p50=Some(100.0) ms p95=Some(100.0) ms
+  run b-1        n=20 missing=0 p50=Some(90.0) ms p95=Some(90.0) ms
+  run a-2        n=19 missing=1 p50=Some(100.0) ms p95=Some(100.0) ms
+  run b-2        n=20 missing=0 p50=Some(90.0) ms p95=Some(90.0) ms
+  run a-3        n=19 missing=1 p50=Some(100.0) ms p95=Some(100.0) ms
+  run b-3        n=20 missing=0 p50=Some(90.0) ms p95=Some(90.0) ms
+  run a-4        n=19 missing=1 p50=Some(100.0) ms p95=Some(100.0) ms
+  run b-4        n=20 missing=0 p50=Some(90.0) ms p95=Some(90.0) ms
+  run a-5        n=19 missing=1 p50=Some(100.0) ms p95=Some(100.0) ms
+  run b-5        n=20 missing=0 p50=Some(90.0) ms p95=Some(90.0) ms
+  pair 1   improvement Some(10.0) %
+  pair 2   improvement Some(10.0) %
+  pair 3   improvement Some(10.0) %
+  pair 4   improvement Some(10.0) %
+  pair 5   improvement Some(10.0) %
+  median improvement Some(10.0) %, 95% CI [10.00, 10.00] % (exploratory: false)
+  label: ValidatedImprovement
+  - median improvement 10.00% >= 5% and interval [10.00, 10.00] excludes zero
+bench exe sha256: f7f5bd12f199703c5181228670ee729652a3f1982dcc02e85c60d50c68a0b288

@@ -13,6 +13,8 @@
 
 #![deny(unsafe_code)]
 
+pub mod analysis;
+
 use std::process::ExitCode;
 use std::time::Instant;
 
@@ -23,21 +25,28 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_ITERATIONS: usize = 200;
 
 const HELP: &str = "\
-ramshaper-bench — RAMShaper measurement harnesses (Stage A)
+ramshaper-bench — RAMShaper measurement harnesses
 
 USAGE:
     ramshaper-bench observer-overhead [--iterations N] [--json] [--config P]
+    ramshaper-bench analyze-ab --blocks <PATH> [--seed <SEED>] [--json]
 
-Measures per-collection latency of the read-only collector paths on this
-machine (global system snapshot; process inventory scan) and reports the
-harness process's own working set / private commit.
+observer-overhead measures per-collection latency of the read-only
+collector paths on this machine (global system snapshot; process inventory
+scan) and reports the harness process's own working set / private commit.
 
-The report is classified with its AT-21 hardware cohort from the optional
-TOML config's [cohort] declared value (4gib, 8gib, 16gib, or none; default
-none). A declared cohort is verified against the machine's measured total
-physical memory and a mismatch refuses the run (exit 2): observations from
-a machine outside a cohort cannot be published as cohort data. With no
-declaration the report is a non-cohort baseline.
+analyze-ab runs the AT-20 paired A/B analysis (doc 08 §4: per-run
+nearest-rank p95, paired-by-block deltas, 10,000-resample bootstrap CI
+with the recorded seed, doc-08 outcome labels) over a JSON blocks file
+and prints the report. This is fixture/statistics machinery: it makes no
+claim about real workloads.
+
+observer-overhead is classified with its AT-21 hardware cohort from the
+optional TOML config's [cohort] declared value (4gib, 8gib, 16gib, or
+none; default none). A declared cohort is verified against the machine's
+measured total physical memory and a mismatch refuses the run (exit 2):
+observations from a machine outside a cohort cannot be published as cohort
+data. With no declaration the report is a non-cohort baseline.
 ";
 
 fn main() -> ExitCode {
@@ -45,6 +54,8 @@ fn main() -> ExitCode {
     let mut json = false;
     let mut iterations: Option<usize> = None;
     let mut config_path: Option<std::path::PathBuf> = None;
+    let mut blocks_path: Option<std::path::PathBuf> = None;
+    let mut seed: Option<u64> = None;
 
     let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {
@@ -75,12 +86,28 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             },
+            "--blocks" => match args.next() {
+                Some(value) => blocks_path = Some(std::path::PathBuf::from(value)),
+                None => {
+                    eprintln!("error: --blocks requires a path");
+                    return ExitCode::from(2);
+                }
+            },
+            "--seed" => match args
+                .next()
+                .and_then(|v| v.to_string_lossy().parse::<u64>().ok())
+            {
+                Some(value) => seed = Some(value),
+                None => {
+                    eprintln!("error: --seed requires an unsigned 64-bit number");
+                    return ExitCode::from(2);
+                }
+            },
             "observer-overhead" if harness.is_none() => harness = Some("observer-overhead"),
+            "analyze-ab" if harness.is_none() => harness = Some("analyze-ab"),
             other => {
                 eprintln!("error: unexpected argument '{other}'");
-                eprintln!(
-                    "usage: ramshaper-bench observer-overhead [--iterations N] [--json] [--config P]"
-                );
+                eprintln!("usage: ramshaper-bench <observer-overhead|analyze-ab> [--json] [...]");
                 return ExitCode::from(2);
             }
         }
@@ -92,6 +119,7 @@ fn main() -> ExitCode {
             json,
             config_path.as_ref(),
         ),
+        Some("analyze-ab") => run_analyze_ab(blocks_path, seed, json),
         _ => {
             eprintln!("error: missing harness name");
             eprintln!(
@@ -193,6 +221,90 @@ fn load_config(path: Option<&std::path::PathBuf>) -> Result<ramshaper_core::Core
             ramshaper_core::CoreConfig::parse(&text)
                 .map_err(|e| format!("invalid config {}: {e}", path.display()))
         }
+    }
+}
+
+/// The AT-20 paired A/B analysis over a JSON blocks file.
+fn run_analyze_ab(
+    blocks_path: Option<std::path::PathBuf>,
+    seed: Option<u64>,
+    json: bool,
+) -> ExitCode {
+    use analysis::{analyze, AbReport, Block, BootstrapConfig, Guardrails, SafetyReport};
+
+    let Some(path) = blocks_path else {
+        eprintln!("error: analyze-ab requires --blocks <PATH>");
+        return ExitCode::from(2);
+    };
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!("error: cannot read blocks {}: {error}", path.display());
+            return ExitCode::from(2);
+        }
+    };
+    let blocks: Vec<Block> = match serde_json::from_str(&text) {
+        Ok(blocks) => blocks,
+        Err(error) => {
+            eprintln!("error: blocks {} is not valid: {error}", path.display());
+            return ExitCode::from(2);
+        }
+    };
+    let config = BootstrapConfig {
+        seed: seed.unwrap_or_else(|| BootstrapConfig::default().seed),
+        ..BootstrapConfig::default()
+    };
+    // Fixture analysis: this offline path feeds no safety observations
+    // (the runner records them); the empty report keeps the label rules
+    // fully exercisable without fabricating a pass.
+    let report: AbReport = analyze(
+        &blocks,
+        &config,
+        &Guardrails::default(),
+        &SafetyReport {
+            safety_failure: false,
+            reasons: Vec::new(),
+        },
+    );
+    if json {
+        match serde_json::to_string_pretty(&report) {
+            Ok(out) => {
+                println!("{out}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("error: serialization failed: {error}");
+                ExitCode::from(1)
+            }
+        }
+    } else {
+        println!(
+            "A/B analysis ({} pairable blocks, resamples {}, seed {})",
+            report.summary.pairs_used, report.summary.resamples, report.summary.seed
+        );
+        for run in &report.runs {
+            println!(
+                "  run {:<10} n={} missing={} p50={:?} ms p95={:?} ms",
+                run.run_id, run.n_valid, run.n_missing, run.p50_ms, run.p95_ms
+            );
+        }
+        for pair in &report.pairs {
+            println!(
+                "  pair {:<3} improvement {:?} %",
+                pair.block_id, pair.improvement_pct
+            );
+        }
+        if let Some((lo, hi)) = report.summary.ci95_improvement_pct {
+            println!(
+                "  median improvement {:?} %, 95% CI [{lo:.2}, {hi:.2}] % (exploratory: {})",
+                report.summary.median_improvement_pct, report.summary.exploratory
+            );
+        }
+        println!("  label: {:?}", report.label);
+        for reason in &report.reasons {
+            println!("  - {reason}");
+        }
+        ExitCode::SUCCESS
     }
 }
 

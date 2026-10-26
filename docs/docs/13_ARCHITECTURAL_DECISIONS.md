@@ -601,3 +601,38 @@ construction (no suspend, one-syscall assignment, verify-before-success);
 AT-15's full launcher-interruption lifecycle trace remains G4 rig work,
 and the RS-022/RS-023 group-accounting and consent tickets now build on a
 measured mechanism instead of the superseded sketch.
+
+## ADR-035: A/B analysis — nearest-rank endpoints, whole-block bootstrap, four labels — Accepted (implemented 2026-10-26; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+
+**Context:** RS-024 Stage B's analysis half and AT-20: the numbers a
+future A/B runner produces must be computable, reproducible and honestly
+labelled before any real comparison runs (which stays owner-gated).
+
+**Decisions:**
+- Pure `ramshaper-bench::analysis` implements doc 08 §4 literally:
+  per-run **nearest-rank ceil(q×n), one-based** p50/p95 (a different rule
+  from the Stage A harness's round-based summary percentile — both stay,
+  each pinned to its contract); sample counts with missing reasons
+  **preserved** (never dropped, never imputed); pairing **by block** with
+  the paired improvement `100×(A−B)/A` defined only for `A > 0`
+  (unavailable, never infinity).
+- The 95% interval is a **bootstrap over whole paired blocks**
+  (10,000 resamples, recorded seed) with a local deterministic SplitMix64 —
+  no new dependency, and identical seeds replay identically. Individual
+  events are never resampled as if independent.
+- The four doc-08 labels with their precedence: **safety failure →
+  Regression regardless of speed**; a completion-guardrail violation
+  (worst-case slowdown beyond 2% foreground / 10% background) → Regression
+  **even when the block count is exploratory** (guardrails trump
+  small-sample uncertainty); `ValidatedImprovement` requires median ≥ 5%
+  AND the interval excluding zero AND a confirmatory block count
+  (exploratory → Inconclusive); an entirely-below-zero interval is an
+  established `Regression`; an adequate protocol without the gain is
+  `NoMeasuredImprovement`.
+- The CLI exposes it as `ramshaper-bench analyze-ab --blocks <JSON>
+  [--seed N]` so AT-20's fixture calculations are independently runnable.
+
+**Consequences:** AT-20 is satisfied by fixture calculations only (8
+tests against hand-computed values, plus a live CLI run); the A/B runner
+that produces real trials remains owner-gated, and this module will simply
+consume its output.

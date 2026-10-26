@@ -1,0 +1,1 @@
+Synthetic fixture (marked synthetic per contract 14 §8): 5 blocks x 20 events, baseline 100 ms with one missing event (reason: event timeout) per run, treatment 90 ms. Expected: paired improvement exactly +10%, CI [10,10], label validated_improvement.
