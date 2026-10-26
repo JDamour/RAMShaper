@@ -82,6 +82,13 @@ pub struct PolicyLoop<J: ActionJournal, A: PriorityActuator> {
     /// In-memory TTL bookkeeping: action id → deadline (mirrors the
     /// journal's Applied records; refreshed from snapshots).
     deadlines: HashMap<String, u64>,
+    /// Due retries the engine scheduled (`RetryScheduled`): action id →
+    /// (trigger to restate, when the attempt is allowed). A due time is
+    /// inclusive (the schedule says when the attempt is allowed); entries
+    /// clear on terminal outcomes, `ManualRetry` and `NeedsAttention`
+    /// (those records wait for an external/manual trigger, never a busy
+    /// tick loop).
+    retry_dues: HashMap<String, (ramshaper_core::coordinator::RestoreTrigger, u64)>,
 }
 
 impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
@@ -96,6 +103,7 @@ impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
             stats: PolicyLoopStats::default(),
             pending: None,
             deadlines: HashMap::new(),
+            retry_dues: HashMap::new(),
         }
     }
 
@@ -146,7 +154,12 @@ impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
                 }
                 _ => continue,
             };
-            if self.account_terminal(&action_id, &outcome, now_unix_ms) {
+            if self.account_terminal(
+                &action_id,
+                ramshaper_core::coordinator::RestoreTrigger::StartupRecovery,
+                &outcome,
+                now_unix_ms,
+            ) {
                 resolved += 1;
                 self.stats.startup_reconciled += 1;
             }
@@ -276,7 +289,7 @@ impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
             trigger,
             now_unix_ms,
         );
-        let _ = self.account_terminal(&action_id, &outcome, now_unix_ms);
+        let _ = self.account_terminal(&action_id, trigger, &outcome, now_unix_ms);
         matches!(
             outcome,
             RestoreOutcome::Restored { .. }
@@ -312,7 +325,42 @@ impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
                 ramshaper_core::coordinator::RestoreTrigger::TtlExpired,
                 now_unix_ms,
             );
-            let _ = self.account_terminal(&action_id, &outcome, now_unix_ms);
+            let _ = self.account_terminal(
+                &action_id,
+                ramshaper_core::coordinator::RestoreTrigger::TtlExpired,
+                &outcome,
+                now_unix_ms,
+            );
+        }
+        // Due retries: re-attempt the engine's bounded schedule (1 s / 5 s
+        // / 30 s) at exactly the due time — inclusive, because the due
+        // value is when the attempt becomes allowed; an earlier call
+        // restates the schedule instead of writing.
+        let due: Vec<(
+            String,
+            ramshaper_core::coordinator::RestoreTrigger,
+            ProcessIdentity,
+        )> = self
+            .retry_dues
+            .iter()
+            .filter(|(_, (_, due))| *due <= now_unix_ms)
+            .map(|(id, (trigger, _))| (id.clone(), *trigger))
+            .filter_map(|(id, trigger)| {
+                self.identity_of(&id)
+                    .map(|identity| (id, trigger, identity))
+            })
+            .collect();
+        for (action_id, trigger, identity) in due {
+            self.retry_dues.remove(&action_id);
+            let outcome = self.engine.restore_once(
+                &self.journal,
+                &mut self.actuator,
+                &identity,
+                &action_id,
+                trigger,
+                now_unix_ms,
+            );
+            let _ = self.account_terminal(&action_id, trigger, &outcome, now_unix_ms);
         }
         // Missed-deadline accounting: one count per trigger, never per
         // tick, and never in place of a real outcome.
@@ -357,11 +405,15 @@ impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
         });
     }
 
-    /// Record a terminal outcome: stats + verification accounting.
-    /// Returns true when the outcome was terminal for the record.
+    /// Record an outcome: stats + verification and retry-schedule
+    /// accounting. Returns true when the outcome was terminal for the
+    /// record. `RetryScheduled` records the next allowed attempt;
+    /// `ManualRetry`/`NeedsAttention` clear any schedule (the record waits
+    /// for an external trigger, never a busy tick loop).
     fn account_terminal(
         &mut self,
         action_id: &str,
+        trigger: ramshaper_core::coordinator::RestoreTrigger,
         outcome: &RestoreOutcome,
         now_unix_ms: u64,
     ) -> bool {
@@ -373,9 +425,17 @@ impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
             RestoreOutcome::Restored { .. } => self.stats.restored += 1,
             RestoreOutcome::Conflict => self.stats.conflicts += 1,
             RestoreOutcome::TargetGone => self.stats.targets_gone += 1,
+            RestoreOutcome::RetryScheduled { due_unix_ms } => {
+                self.retry_dues
+                    .insert(action_id.to_string(), (trigger, *due_unix_ms));
+            }
+            RestoreOutcome::ManualRetry | RestoreOutcome::NeedsAttention => {
+                self.retry_dues.remove(action_id);
+            }
             _ => {}
         }
         if terminal {
+            self.retry_dues.remove(action_id);
             if let Some(pending) = self.pending.take() {
                 if pending.action_id == action_id
                     && !pending.miss_counted

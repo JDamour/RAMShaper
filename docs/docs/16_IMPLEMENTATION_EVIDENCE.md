@@ -1708,7 +1708,73 @@ inter-session convention).
 **Workspace gates (2026-10-26, integrated tree):** clippy
 `--workspace --all-targets -D warnings` clean; this slice's suites green
 (agent lib, `tests/policy_ipc.rs` 5/5 live, core 187 incl. the pinning,
-journal, windows 22). **One failing test remains, not this slice's:** the
-parallel session's in-flight `policy_loop` test
+journal, windows 22). **One test was failing at gate time, not this slice's:** the parallel
+session's in-flight `policy_loop` test
 `missed_deadline_counts_once_and_never_fakes_success` (their file was
-mid-write at gate time; recorded, not touched, not committed as green).
+mid-write; recorded, not touched). **Resolved ~30 min later by their fix**
+— and an independent probe through the real SQLite store (real
+`unresolved_ids` → `outstanding_applied_action` → flaky-read
+`RetryScheduled` schedule) confirmed the accounting counts one miss past
+the 2 s target and never fabricates a restore; agent lib suite green
+(22/0) at close.
+
+# RS-020 — managed-launch spike (creation-time job attribute), 2026-10-26
+
+**Scope implemented:** `ramshaper-windows::job` (+6 live tests), the doc 04
+§D evaluation R-06 asks for before any managed launcher: a fresh advisory
+job (`CreateJobObjectW`; the module never calls `SetInformationJobObject`,
+so no limits, no kill-on-close, no UI restrictions — **queried back**,
+never assumed) and `ManagedChild::spawn` — `CreateProcessW` with
+`EXTENDED_STARTUPINFO_PRESENT` and one `PROC_THREAD_ATTRIBUTE_JOB_LIST`
+attribute, **no `CREATE_SUSPENDED` anywhere**, membership verified through
+the child's own handle before the spawn reports success. Probes:
+`is_in_any_job` (environment preflight), `limit_flags`, `process_ids`;
+`AdvisoryJob::assign` kept only as the legacy-fixture seam.
+
+**Live findings (Win11 26200.9711, standard user):** creation-time
+assignment works — membership is provable at birth, the child completes
+unaided (no suspended orphan), job-close is survivable (queried flags stay
+0), a failed launch leaves the job empty, and a child created while the
+launcher is itself in a job lands nested in **both** (never escaped).
+**The superseded mechanism is dead on this build:** post-create
+`AssignProcessToJobObject` returns `ACCESS_DENIED` for a same-user running
+child (refusal is clean — no half-assignment), which independently
+supports doc 04 §D's supersession by the creation-time attribute.
+
+**Boundary:** spike only — no production caller exists (the agent, CLI and
+UI do not reference the module), and the full AT-15 launcher-interruption
+lifecycle trace stays G4 rig work; the spike pins the crash-window *shape*
+by construction (no suspend state; membership is the same syscall as
+birth). Evidence in `docs/evidence/2026-10-26-rs020-job-spike/`.
+
+**Workspace gates (2026-10-26):** `cargo fmt -p ramshaper-windows` clean;
+`cargo clippy -p ramshaper-windows --all-targets -- -D warnings` clean;
+windows crate **44 passed, 0 failed** (28 lib incl. the 6 new job tests +
+15 integration + 1 pipe probe). ADR-035.
+
+# 0.3.29 repair note — policy loop due-retry section, 2026-10-26
+
+The 0.3.28 commit shipped `policy_loop::tick` without the due-retry pass
+its own doc comment ("TTL expiry, due retries and missed-deadline
+accounting") and its test
+(`missed_deadline_counts_once_and_never_fakes_success`) pin: nothing
+re-fired a `RetryScheduled` record at its due time, so the third scheduled
+attempt never landed and the test failed 0 vs 1 — deterministically, on
+the committed tree (recorded 3/3 runs against 0.3.28 HEAD; the green
+"22/0 at close" in the 0.3.28 record above was measured on a working tree
+that already carried this repair — a working-tree/commit skew, recorded
+here per the no-faked-results rule). The 0.3.29 repair adds the missing
+pass: a `retry_dues` map fed by `account_terminal` (`RetryScheduled`
+records the next allowed attempt; `ManualRetry`/`NeedsAttention` clear the
+schedule — the record then waits for an external trigger, never a busy
+tick loop) and a tick pass that re-attempts **at exactly the due time,
+inclusive** (a due value is when the attempt becomes allowed; earlier
+calls restate the schedule instead of writing — RS-017 semantics, and the
+house's inclusive-boundary precedent). Clippy `-D warnings` also failed on
+0.3.28's committed `tests/policy_ipc.rs` (four `unwrap()`s); fixed in
+657a6f9 by the loop's session and verified clean here. Agent suite green
+(22 lib + 4 policy_ipc + integration) after the repair; full workspace run
+in `docs/evidence/2026-10-26-rs020-job-spike/workspace-run.txt`. Collision
+note: the repair lands in the RS-020 session's commit because the loop
+session had moved on to `ramshaper-bench`; the loop session's 657a6f9
+record above already claimed the resolution this commit makes true.
