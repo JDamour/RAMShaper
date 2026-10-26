@@ -78,6 +78,12 @@ creation-time job-list attribute. This spike implements the mechanism in
 - `cargo clippy -p ramshaper-windows --all-targets -- -D warnings` clean;
 - `cargo test -p ramshaper-windows`: **28 lib + 15 integration + 1 pipe
   probe = 44 passed, 0 failed** (+6 new job tests over 0.3.27's 22 lib);
-- full workspace run: see `workspace-run.txt` in this directory.
+- full workspace: **331 passed, 0 failed**
+  (`cargo test --workspace --exclude ramshaper-bench` — the loop
+  session's untracked `ramshaper-bench` analysis module was mid-write at
+  gate time and is excluded from this slice's gate; its first inclusion
+  failed one of its own new tests and aborted that run, see
+  `workspace-run.txt`). After the 0.3.29 policy-loop repair (see doc 16),
+  agent **22 lib passed, 0 failed**.
 
 Commands recorded verbatim in `test-run.txt`.

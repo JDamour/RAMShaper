@@ -563,3 +563,41 @@ action direction (no IPC path can create actions yet).
 **Consequences:** the G3 glue is in place end to end — what remains
 before G3 evidence is owner-gated: enabling the consent flow, the live
 child-inheritance probe, and allowlist population (RS-024 Stage B).
+
+## ADR-035: Managed launch — creation-time job assignment, advisory jobs only — Accepted (implemented 2026-10-26; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+
+**Context:** R-06 — a managed launcher that creates a process and only
+*then* assigns it to a job has a crash window (a stranded half-managed or
+suspended child), and the earlier suspended-create/assign/resume sketch
+concentrates exactly that risk. Doc 04 §D directs evaluating the
+documented creation-time job-list attribute instead, before any G4
+launcher work (AT-15/AT-16).
+
+**Decisions:**
+- The managed-launch mechanism is the **creation-time job-list attribute**
+  (`PROC_THREAD_ATTRIBUTE_JOB_LIST` on `CreateProcessW`): membership and
+  birth are the same syscall — there is no unmanaged window and no
+  suspend state to strand. Live on 26200.9711: membership is verifiable
+  through the child's own handle before the spawn reports success, and
+  the superseded post-create `AssignProcessToJobObject` path is
+  `ACCESS_DENIED` for a running same-user child — the legacy mechanism is
+  not merely inferior but unavailable on current Windows.
+- Jobs used by RAMShaper are **fresh and advisory**: no
+  `SetInformationJobObject` call exists in the module, so there is no
+  kill-on-close, no hard memory/CPU/time/process-count limit and no UI
+  restriction; the tests assert the queried limit flags are 0 rather than
+  trusting the constructor (AT-16's "queried job flags" evidence path).
+- Preexisting job environments are **detected, never escaped**
+  (`is_in_any_job` preflight; a child created under a launcher that is
+  itself in a job lands nested in both — the spike asserts the nesting
+  rather than assuming it).
+- **The launcher stays unavailable in the shipped surface**: the spike
+  module has no production caller; exposure is decided by RS-023's
+  consent flow plus the G4 interruption evidence. If a future rig fails
+  the safety gate, the feature stays disabled (doc 07).
+
+**Consequences:** the crash-window shape R-06 warns about is closed by
+construction (no suspend, one-syscall assignment, verify-before-success);
+AT-15's full launcher-interruption lifecycle trace remains G4 rig work,
+and the RS-022/RS-023 group-accounting and consent tickets now build on a
+measured mechanism instead of the superseded sketch.
