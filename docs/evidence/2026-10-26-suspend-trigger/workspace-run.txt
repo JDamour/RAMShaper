@@ -1,0 +1,590 @@
+
+running 30 tests
+test consent::tests::only_the_exact_word_consents ... ok
+test dispatch::policy_dispatch_tests::still_unknown_commands_stay_unsupported ... ok
+test dispatch::policy_dispatch_tests::policy_commands_answer_unsupported_without_a_gate ... ok
+test dispatch::tests::fresh_snapshot_is_served_with_age ... ok
+test dispatch::tests::get_config_serves_the_inert_summary ... ok
+test dispatch::tests::get_processes_collection_failure_is_a_retryable_os_error ... ok
+test dispatch::tests::get_processes_without_a_provider_is_unsupported_never_empty ... ok
+test dispatch::tests::get_processes_serves_a_fresh_inventory_verbatim ... ok
+test consent::tests::everything_else_stays_observe_only ... ok
+test dispatch::tests::subscribe_acknowledges_and_unknown_commands_are_unsupported ... ok
+test dispatch::tests::stale_or_missing_snapshot_is_an_error_never_old_data ... ok
+test policy_loop::tests::child_spawned_trip_restores_and_records_the_finding ... ok
+test policy_loop::tests::focus_stale_beyond_the_freshness_window_trips ... ok
+test dispatch::tests::get_config_summary_builds_from_a_config ... ok
+test policy_loop::tests::missed_deadline_counts_once_and_never_fakes_success ... ok
+test dispatch::tests::capabilities_and_list_actions_succeed ... ok
+test dispatch::policy_dispatch_tests::list_actions_serves_journal_records_when_the_gate_exists ... ok
+test dispatch::tests::version_mismatch_is_rejected_before_dispatch ... ok
+test policy_loop::tests::disabled_loop_is_a_noop_everywhere ... ok
+test dispatch::tests::response_correlates_request_ids ... ok
+test policy_loop::tests::outstanding_applied_identity_serves_the_safety_feed ... ok
+test policy_loop::tests::safety_trip_restores_the_parent ... ok
+test policy_loop::tests::startup_recovery_reconciles_without_reapplying ... ok
+test policy_loop::tests::session_lock_trips_the_restore ... ok
+test policy_loop::tests::startup_recovery_restores_a_live_write ... ok
+test policy_loop::tests::system_resume_trips_the_suspend_restore ... ok
+test policy_loop::tests::ttl_tick_restores_an_expired_action ... ok
+test server::tests::peer_validation_decides_by_session_and_user ... ok
+test server::tests::process_scan_state_warms_then_rates_span_the_real_gap ... ok
+test server::tests::subscriber_queue_is_bounded_with_gap_markers ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+
+running 5 tests
+test tests::pipe_names_are_normalized ... ok
+test tests::policy_journal_flag_selects_the_policy_stage ... ok
+test tests::usage_errors ... ok
+test tests::version_and_help ... ok
+test tests::parses_serve_and_probe ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 15 tests
+test request_envelope_roundtrip_via_ipc_module ... ok
+test list_actions_is_empty_and_honest ... ok
+test malformed_frame_gets_one_error_then_close ... ok
+test version_mismatch_is_rejected_before_dispatch ... ok
+test get_processes_rejects_wrong_version_before_any_scan ... ok
+test malformed_framing_prefix_ends_the_connection_silently ... ok
+test capabilities_over_real_pipe ... ok
+test unknown_command_is_unsupported ... ok
+test oversized_frame_prefix_is_rejected_without_allocation ... ok
+test replayed_request_is_served_identically_on_the_same_connection ... ok
+test get_config_over_real_pipe_serves_the_inert_summary ... ok
+test policy_commands_with_a_present_but_disabled_gate_answer_busy_not_unsupported ... ok
+test snapshot_over_real_pipe_carries_metrics_and_pressure ... ok
+test subscribe_streams_snapshots_until_peer_leaves ... ok
+test get_processes_serves_a_real_inventory_with_warming_then_real_rates ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.63s
+
+
+running 3 tests
+test malformed_payloads_are_invalid_arguments_not_panics ... ok
+test unknown_action_ids_never_create_journal_state ... ok
+test a_disabled_gate_refuses_every_action_command_with_explanations ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s
+
+
+running 8 tests
+test disabled_gate_rejects_previews_until_explicitly_enabled ... ok
+test restore_of_an_unknown_id_is_an_explained_refusal ... ok
+
+Pinging 127.0.0.1 with 32 bytes of data:
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+
+Pinging 127.0.0.1 with 32 bytes of data:
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+
+Pinging 127.0.0.1 with 32 bytes of data:
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+
+Pinging 127.0.0.1 with 32 bytes of data:
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+
+Pinging 127.0.0.1 with 32 bytes of data:
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+test untested_third_party_targets_are_denied_with_the_full_report ... ok
+test policy_gate_full_loop_applies_and_restores_a_spawned_child ... ok
+test disable_drains_outstanding_actions_and_blocks_new_previews ... ok
+test stopping_the_agent_runs_the_clean_exit_trigger ... ok
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+test ttl_expiry_restores_through_the_live_ticker ... ok
+
+Pinging 127.0.0.1 with 32 bytes of data:
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+test child_spawned_after_apply_is_inherited_then_trips_the_restore ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 14.94s
+
+
+running 20 tests
+test analysis::tests::missing_values_are_preserved_and_counted_never_imputed ... ok
+test analysis::tests::nearest_rank_ceil_matches_hand_computation ... ok
+test analysis::tests::nonpositive_denominator_yields_unavailable_never_infinity ... ok
+test prereg::tests::analysis_deviations_include_seed_and_thresholds ... ok
+test analysis::tests::paired_deltas_match_independently_calculated_percentages ... ok
+test analysis::tests::cohort_p95_is_never_the_average_of_run_percentiles ... ok
+test prereg::tests::every_deviation_is_named_not_just_the_first ... ok
+test prereg::tests::sample_document_parses_and_validates ... ok
+test analysis::tests::guardrail_violation_is_a_regression ... ok
+test prereg::tests::matching_plan_verifies_clean ... ok
+test workload::tests::spec_validates_the_doc08_minimum ... ok
+test workload::tests::run_produces_the_full_schedule_with_warmup_excluded ... ok
+test workload::tests::stop_control_stops_early_and_records_completion ... ok
+test prereg::tests::unknown_fields_and_bad_schemas_are_refused ... ok
+test prereg::tests::structural_rules_are_checked_at_parse ... ok
+test workload::tests::incomplete_pairs_are_excluded_from_analysis_but_retained ... ok
+test workload::tests::treatment_closure_runs_before_each_measured_task ... ok
+test workload::tests::ab_pilot_counterbalances_order_and_pairs_by_block ... ok
+test analysis::tests::bootstrap_is_deterministic_for_a_recorded_seed ... ok
+test analysis::tests::labels_follow_the_doc08_decision_table ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+
+running 4 tests
+test tests::baseline_declaration_classifies_the_observation ... ok
+test tests::declared_cohort_on_this_64gib_machine_is_refused ... ok
+test tests::percentile_handles_unsorted_input ... ok
+test tests::percentile_matches_known_values ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 6 tests
+test a_plan_freezing_a_nondefault_confirmatory_threshold_is_refused ... ok
+test order_seed_reroll_is_a_named_deviation ... ok
+test every_workload_deviation_is_named_not_just_the_first ... ok
+test closed_schema_refuses_unknown_fields ... ok
+test structural_rules_refuse_at_parse ... ok
+test analysis_deviations_are_named_and_the_match_passes_by_construction ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 7 tests
+test tests::exit_code_contract ... ok
+test tests::help_documents_new_commands ... ok
+test tests::parses_info_and_flags ... ok
+test tests::parses_stop_after_ms_for_watch_only ... ok
+test tests::usage_errors ... ok
+test tests::version_and_help_win ... ok
+test tests::watch_interval_precedence_flag_overrides_config ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 19 tests
+test bad_interval_is_usage_error ... ok
+test help_lists_commands_and_exits_zero ... ok
+test info_json_includes_pressure_section ... ok
+test info_json_is_one_versioned_object_with_contract_fields ... ok
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+test usage_error_writes_stderr_only_and_exits_two ... ok
+test info_text_reports_metrics_with_units ... ok
+test watch_json_emits_ndjson_lines_before_kill ... ok
+test info_json_physical_total_is_plausible_for_this_machine ... ok
+test version_prints_and_exits_zero ... ok
+test config_tests::import_rejects_invalid_source_and_keeps_dest ... ok
+test config_tests::export_then_import_roundtrip_is_lossless ... ok
+test config_tests::export_roundtrips_a_custom_source ... ok
+test config_tests::import_rejects_missing_into_and_policy_mode ... ok
+test invalid_config_file_is_exit_two ... ok
+test config_tests::config_usage_errors_and_help ... ok
+test processes_text_lists_processes_with_headers ... ok
+test processes_json_has_contract_shape ... ok
+test watch_interval_flag_reaches_the_watch_banner ... ok
+Reply from 127.0.0.1: bytes=32 time=1ms TTL=128
+test valid_config_sets_watch_interval ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.21s
+
+
+running 188 tests
+test clock::tests::fake_clock_advances_both_scales ... ok
+test cohort::tests::declaration_strings_roundtrip ... ok
+test cohort::tests::band_edges_are_inclusive_low_and_exclusive_high ... ok
+test cohort::tests::declared_none_always_verifies_as_baseline ... ok
+test cohort::tests::reservation_shortfalls_stay_in_cohort ... ok
+test cohort::tests::declared_cohort_without_a_reading_is_unverifiable ... ok
+test cohort::tests::bands_never_overlap ... ok
+test cohort::tests::in_between_and_larger_sizes_are_non_cohort ... ok
+test cohort::tests::nominal_sizes_classify_into_their_cohort ... ok
+test cohort::tests::better_machine_cannot_substitute_for_a_declared_cohort ... ok
+test cohort::tests::validation_machine_64gib_is_non_cohort_baseline ... ok
+test cohort::tests::serde_uses_canonical_strings ... ok
+test config::cohort_tests::declaration_is_accept_without_machine_verification ... ok
+test config::agent_tests::agent_unknown_field_is_rejected_by_name ... ok
+test config::cohort_tests::absent_cohort_section_defaults_to_none ... ok
+test config::cohort_tests::cohort_unknown_field_is_rejected_by_name ... ok
+test config::agent_tests::agent_section_parses_pipe_name ... ok
+test cohort::tests::declared_cohort_verifies_only_on_a_matching_machine ... ok
+test config::cohort_tests::unknown_cohort_declaration_is_a_field_error ... ok
+test config::exclusions_tests::absent_section_is_empty_and_roundtrips ... ok
+test config::cohort_tests::cohort_section_parses_every_declaration ... ok
+test config::exclusions_tests::exclusions_unknown_field_is_rejected_by_name ... ok
+test config::exclusions_tests::exclusion_entries_are_names_not_paths ... ok
+test config::exclusions_tests::exclusion_list_parses_and_roundtrips ... ok
+test config::profiles_tests::profile_selection_is_inert ... ok
+test config::profiles_tests::profiles_unknown_field_is_rejected_by_name ... ok
+test config::tests::minimal_document_uses_defaults_inside_watch ... ok
+test config::profiles_tests::unknown_profile_is_a_field_error ... ok
+test config::tests::malformed_toml_is_reported_without_partial_state ... ok
+test config::tests::defaults_are_valid_and_observe_only ... ok
+test config::tests::out_of_range_values_are_field_errors ... ok
+test config::tests::policy_modes_are_rejected_not_defaulted ... ok
+test config::tests::roundtrip_through_serialize_and_parse ... ok
+test config::profiles_tests::every_preset_parses_and_defaults_to_balanced ... ok
+test config::tests::schema_version_missing_or_unsupported_is_rejected ... ok
+test config::tests::valid_document_parses_with_every_field ... ok
+test coordinator::tests::confirm_prepares_durable_record_before_the_os_write ... ok
+test config::tests::unknown_fields_are_rejected_by_name ... ok
+test coordinator::tests::failure_classification_follows_the_actuator_error ... ok
+test coordinator::tests::journal_unavailable_blocks_preview_and_confirm ... ok
+test coordinator::tests::one_action_slot_blocks_a_second_preview ... ok
+test coordinator::tests::preview_denied_under_normal_pressure_or_ineligible_target ... ok
+test coordinator::tests::preview_expires_after_30_s_inclusive_boundary ... ok
+test config::exclusions_tests::exclusion_count_is_bounded ... ok
+test coordinator::tests::preview_offered_under_elevated_with_eligible_target ... ok
+test coordinator::tests::replayed_confirm_never_writes_twice ... ok
+test coordinator::tests::restore_tests::access_denied_needs_attention_without_retries ... ok
+test coordinator::tests::restore_tests::disable_stops_new_applies_and_drops_the_preview ... ok
+test coordinator::tests::restore_tests::nothing_to_undo_restores_without_writing ... ok
+test coordinator::tests::restore_tests::restore_of_a_gone_target_writes_nothing ... ok
+test coordinator::tests::restore_tests::restore_preserves_an_external_change_as_conflict ... ok
+test coordinator::tests::restore_tests::success_on_a_scheduled_retry_clears_the_schedule ... ok
+test coordinator::tests::restore_tests::transient_failures_retry_at_1s_5s_30s_then_manual ... ok
+test coordinator::tests::restore_tests::ttl_expiry_restores_the_original_and_verifies ... ok
+test coordinator::tests::restore_tests::ttl_snapshot_helper_flags_expired_deadlines ... ok
+test coordinator::tests::unused_property_construction_is_exhaustive_over_the_contract ... ok
+test eligibility::tests::all_checks_pass_yields_eligible ... ok
+test eligibility::tests::allowlist_membership_is_case_insensitive_and_versioned ... ok
+test eligibility::tests::different_owner_session_denies ... ok
+test eligibility::tests::display_of_eligible_report_names_all_checks ... ok
+test eligibility::tests::empty_allowlist_denies_everything_by_design ... ok
+test eligibility::tests::every_protected_category_denies ... ok
+test eligibility::tests::focus_freshness_boundary_is_inclusive ... ok
+test eligibility::tests::foreground_target_denies_even_when_fresh ... ok
+test eligibility::tests::identity_unreachable_denies_with_machine_code ... ok
+test eligibility::tests::non_normal_original_priority_denies ... ok
+test eligibility::tests::multiple_failures_are_all_reported_in_order ... ok
+test eligibility::tests::observed_children_deny_leaf_gate ... ok
+test eligibility::tests::outstanding_action_denies ... ok
+test eligibility::tests::pid_reuse_denies_and_never_inherits ... ok
+test eligibility::tests::unavailable_journal_denies ... ok
+test eligibility::tests::report_serializes_for_ipc_and_ui ... ok
+test eligibility::tests::unknown_child_state_denies ... ok
+test eligibility::tests::unknown_classification_denies ... ok
+test eligibility::tests::unknown_focus_denies ... ok
+test eligibility::tests::unknown_original_priority_denies ... ok
+test eligibility::tests::unknown_owner_session_denies ... ok
+test eligibility::tests::unsupported_and_unknown_capability_deny ... ok
+test eligibility::tests::user_exclusion_matches_case_insensitively ... ok
+test clock::tests::system_clock_is_plausibly_current ... ok
+test envelope::tests::json_shape_and_field_set ... ok
+test envelope::tests::ok_envelope_carries_value ... ok
+test envelope::tests::unavailable_envelope_never_carries_a_value ... ok
+test guardrails::tests::cooldown_blocks_for_60s_after_a_terminal_record_then_admits ... ok
+test guardrails::tests::cooldown_is_keyed_per_identity ... ok
+test guardrails::tests::child_spawn_trips_restore_and_records_the_finding ... ok
+test guardrails::tests::foreground_session_and_stale_focus_map_to_their_triggers ... ok
+test guardrails::tests::failed_target_stays_disabled_until_explicit_reenable ... ok
+test guardrails::tests::one_action_cap_holds_under_repeat_confirmations ... ok
+test guardrails::tests::pinned_records_start_no_cooldown ... ok
+test guardrails::tests::resume_detector_needs_a_baseline_and_a_real_jump ... ok
+test history::tests::byte_budget_evicts_oldest_and_stays_exact ... ok
+test history::tests::capacity_pressure_evicts_oldest_and_counts_it ... ok
+test guardrails::tests::trigger_codes_are_stable_for_the_evidence_trail ... ok
+test history::tests::empty_history_is_empty ... ok
+test history::tests::missed_sequences_are_counted_as_gaps ... ok
+test history::tests::oversized_sample_is_rejected_and_counted ... ok
+test history::tests::retention_window_expires_old_samples ... ok
+test history::tests::stores_samples_in_order_and_reports_stats ... ok
+test identity::tests::identity_equality_requires_both_fields ... ok
+test identity::tests::verification_variants_distinguish_reuse_from_gone ... ok
+test identity::tests::json_serializes_filetime_as_decimal_string ... ok
+test ipc::tests::frame_roundtrip ... ok
+test ipc::tests::oversized_prefix_is_rejected_before_allocation ... ok
+test ipc::tests::request_envelope_parses_and_rejects_shapes ... ok
+test ipc::tests::zero_length_prefix_is_malformed ... ok
+test ipc::tests::snapshot_delivery_carries_gap_marker ... ok
+test journal::tests::illegal_transitions_are_refused ... ok
+test ipc::tests::response_frame_respects_cap ... ok
+test journal::tests::legal_transitions_follow_the_contract_table ... ok
+test ipc::tests::response_shape_matches_contract ... ok
+test ipc::tests::retryability_follows_the_contract ... ok
+test journal::tests::pinning_follows_recovery_needs ... ok
+test journal::tests::reconciliation_events_carry_the_decision_into_the_state_machine ... ok
+test journal::tests::unreadable_original_has_no_restore_path ... ok
+test journal::tests::retention_prunes_only_expired_terminal_records ... ok
+test journal::tests::record_cap_blocks_instead_of_evicting ... ok
+test policy::tests::confirm_without_preview_is_no_action ... ok
+test journal::tests::startup_reconciliation_reads_reality_not_intentions ... ok
+test policy::tests::elevated_pressure_with_eligible_target_offers_exactly_one_preview ... ok
+test policy::tests::disable_blocks_future_offers ... ok
+test policy::tests::dry_run_is_deterministic ... ok
+test policy::tests::eligibility_change_between_offer_and_confirm_blocks_apply ... ok
+test policy::tests::confirm_replay_is_idempotent ... ok
+test policy::tests::full_lifecycle_confirm_then_ttl_expiry_at_deadline ... ok
+test policy::tests::ineligible_target_carries_the_eligibility_denies ... ok
+test policy::tests::preview_validity_boundary_is_inclusive ... ok
+test policy::tests::preview_reoffer_keeps_action_id_until_expired ... ok
+test policy::tests::no_action_reason_codes_are_stable ... ok
+test policy::tests::preview_expires_after_30_s ... ok
+test policy::tests::log_serializes_with_schema_and_summary ... ok
+test policy::tests::journal_unavailable_blocks_offers_and_confirms_but_not_recovery ... ok
+test policy::tests::one_action_cap_blocks_new_previews_while_active ... ok
+test policy::tests::quiet_trace_never_offers_anything ... ok
+test policy::tests::resolve_triggers_map_to_contract_final_states ... ok
+test policy::tests::trigger_precedence_disable_wins ... ok
+test pressure::tests::critical_is_never_emitted_and_replays_are_identical ... ok
+test policy::tests::resolved_experiment_can_be_re_offered_without_cooldown ... ok
+test policy::tests::rules_validate_ttl_range ... ok
+test pressure::tests::elevated_requires_three_observations_spanning_two_seconds ... ok
+test pressure::tests::display_text_never_claims_contention_absence_beyond_low_memory ... ok
+test pressure::tests::missing_inputs_lists_exact_names ... ok
+test pressure::tests::missing_observation_resets_to_unknown ... ok
+test pressure::tests::mixed_signal_breaks_runs_and_resets_windows ... ok
+test pressure::tests::normal_requires_five_observations_spanning_four_seconds ... ok
+test pressure::tests::previous_valid_state_is_retained_while_transition_pending ... ok
+test pressure::tests::signal_and_clear_constants_are_distinct ... ok
+test process::tests::counter_decrease_resets_to_warming_up ... ok
+test process::tests::cpu_percent_scales_with_machine_capacity ... ok
+test process::tests::first_scan_is_all_warming_up ... ok
+test process::tests::full_machine_saturation_clamps_at_100 ... ok
+test process::tests::nonpositive_interval_is_warming_up ... ok
+test process::tests::per_process_denial_is_reported_not_zeroed ... ok
+test process::tests::persistently_denied_processes_do_not_count_as_churn ... ok
+test process::tests::reused_pid_is_a_new_identity_and_warms_up ... ok
+test process::tests::second_scan_of_same_identity_yields_exact_rates ... ok
+test process::tests::topology_change_resets_rates ... ok
+test render::tests::metric_names_are_stable_json_keys ... ok
+test render::tests::info_text_shows_unavailable_reasons ... ok
+test render::tests::info_text_states_units_and_values ... ok
+test render::tests::watch_line_handles_unavailable_commit ... ok
+test render::tests::watch_line_is_single_line_with_state ... ok
+test rfc3339::tests::epoch_is_1970_start ... ok
+test rfc3339::tests::known_timestamps ... ok
+test rfc3339::tests::output_shape_is_stable ... ok
+test snapshot::tests::available_exceeding_total_is_rejected_not_wrapped ... ok
+test snapshot::tests::commit_used_exceeding_limit_rejects_headroom ... ok
+test snapshot::tests::derived_metrics_carry_derivation_notes ... ok
+test snapshot::tests::exact_byte_values_from_page_fixtures ... ok
+test snapshot::tests::healthy_fixture_classifies_ok ... ok
+test snapshot::tests::low_memory_failure_is_partial_not_fatal ... ok
+test snapshot::tests::json_is_one_versioned_object_with_integer_bytes ... ok
+test snapshot::tests::memory_query_failure_maps_to_typed_statuses ... ok
+test snapshot::tests::overflowing_page_counts_are_errors ... ok
+test snapshot::tests::zero_page_size_fails_every_conversion_explicitly ... ok
+test status::tests::serde_uses_snake_case_names ... ok
+test units::tests::byte_difference_rejects_negative_results ... ok
+test units::tests::exact_conversion_for_common_page_sizes ... ok
+test units::tests::format_bytes_uses_gib_above_1_gib ... ok
+test units::tests::overflow_is_an_error_not_a_wrap ... ok
+test units::tests::zero_page_size_is_an_error ... ok
+test watch::tests::cancellation_while_signaled_is_prompt ... ok
+test watch::tests::config_rejects_out_of_range_intervals ... ok
+test watch::tests::late_wakeups_never_cluster_ticks ... ok
+test watch::tests::persistent_signaling_does_not_spin ... ok
+test watch::tests::slow_collection_skips_missed_ticks_without_burst ... ok
+test watch::tests::waits_use_the_configured_interval ... ok
+test ipc::tests::response_frame_rejects_payload_over_cap ... ok
+
+test result: ok. 188 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 10 tests
+test optimistic_state_guard_rejects_moved_records ... ok
+test reused_pid_receives_zero_writes ... ok
+test pinned_records_survive_pruning_and_block_at_quota ... ok
+test happy_path_prepare_apply_restore_round_trips_durably ... ok
+test clear_history_retains_recovery_intent_during_active_action ... ok
+test crash_after_prepared_reconciles_from_current_value_never_reapplies ... ok
+test disk_full_blocks_new_records_but_preserves_and_recovers ... ok
+test records_survive_reopen_for_startup_recovery ... ok
+test schema_version_mismatch_refuses_and_leaves_untouched ... ok
+test store_plugs_into_the_coordinator_trait ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+
+running 8 tests
+test fake::tests::capabilities_report_supported ... ok
+test fake::tests::low_memory_unavailable_is_partial ... ok
+test fake::tests::empty_script_reports_unsupported_not_panic ... ok
+test fake::tests::healthy_fake_yields_exact_values ... ok
+test capabilities::tests::set_reports_support_and_reasons ... ok
+test fake::tests::denied_fake_reports_denial_not_zero ... ok
+test fake::tests::os_error_fake_preserves_code ... ok
+test fake::tests::scripted_sequence_plays_in_order_then_repeats ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 13 tests
+test contrast_audit::wcag_math_matches_published_check_values ... ok
+test process_page_tests::missing_processes_array_is_an_empty_table_not_a_panic ... ok
+test tests::formats_healthy_snapshot_per_spec ... ok
+test contrast_audit::every_ui_color_pair_meets_its_wcag_minimum ... ok
+test process_page_tests::parsing_keeps_numeric_keys_and_marks_denied_rows ... ok
+test process_page_tests::sorting_covers_all_keys_and_sinks_unavailable ... ok
+test tests::formats_elevated_and_unavailable_states ... ok
+test process_page_tests::note_reports_count_sort_and_cap ... ok
+test tests::actions_rows_mark_pending_and_history_and_restore_scope ... ok
+test tests::poll_ms_is_a_positive_whole_number ... ok
+test tests::actions_rows_of_an_empty_stub_render_nothing ... ok
+test process_page_tests::model_rows_carry_units_and_whole_row_accessibility ... ok
+test tests::pipe_names_are_normalized ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 30 tests
+test eligibility::tests::capability_of_own_process_is_supported ... ok
+test eligibility::tests::classification_covers_self_identification_only ... ok
+test eligibility::tests::focus_of_windowless_test_process_is_never_foreground ... ok
+test eligibility::tests::last_error_helper_preserves_code ... ok
+test eligibility::tests::owner_session_of_current_process_is_current_user_session ... ok
+test error::tests::access_denied_maps_to_typed_failure ... ok
+test eligibility::tests::session_lock_probe_is_definite_on_an_interactive_rig ... ok
+test job::tests::failed_launch_reports_error_and_leaves_the_job_empty ... ok
+test error::tests::open_process_invalid_parameter_means_exited ... ok
+test error::tests::other_codes_preserve_function_and_code ... ok
+test job::tests::advisory_job_defaults_have_zero_limits ... ok
+
+Pinging 127.0.0.1 with 32 bytes of data:
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+
+Pinging 127.0.0.1 with 32 bytes of data:
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+
+Pinging 127.0.0.1 with 32 bytes of data:
+
+Pinging 127.0.0.1 with 32 bytes of data:
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+test power::tests::pair_is_available_and_stable_while_awake ... ok
+test window::tests::missing_window_is_none_and_reads_not_minimized ... ok
+test priority::tests::mismatched_creation_identity_is_refused_without_effect ... ok
+
+Pinging 127.0.0.1 with 32 bytes of data:
+test priority::tests::read_returns_the_class_through_a_validated_handle ... ok
+test eligibility::tests::priority_class_of_fresh_child_is_normal ... ok
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+test priority::tests::write_on_spawned_child_normal_to_below_normal_and_restored ... ok
+test eligibility::tests::priority_class_of_unresolvable_pid_is_unknown ... ok
+test eligibility::tests::capability_is_unsupported_for_system_service_process_on_standard_user ... ok
+test eligibility::tests::capability_of_unresolvable_pid_is_unknown ... ok
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+test priority::tests::read_on_an_unresolvable_pid_is_identity_mismatch ... ok
+test priority::tests::unresolvable_pid_is_refused_without_effect ... ok
+test eligibility::tests::children_of_current_process_include_the_spawned_child ... ok
+test eligibility::tests::owner_session_of_system_process_is_unknown_or_different_never_current ... ok
+test eligibility::tests::owner_session_of_unresolvable_pid_is_unknown ... ok
+test eligibility::tests::children_of_unresolvable_pid_is_unknown ... ok
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+
+Ping statistics for 127.0.0.1:
+    Packets: Sent = 3, Received = 3, Lost = 0 (0% loss),
+Approximate round trip times in milli-seconds:
+    Minimum = 0ms, Maximum = 0ms, Average = 0ms
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+
+Ping statistics for 127.0.0.1:
+    Packets: Sent = 3, Received = 3, Lost = 0 (0% loss),
+Approximate round trip times in milli-seconds:
+    Minimum = 0ms, Maximum = 0ms, Average = 0ms
+test job::tests::nested_environment_child_lands_in_both_jobs ... ok
+test job::tests::job_close_is_survivable_even_without_an_explicit_child_reference ... ok
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+
+Ping statistics for 127.0.0.1:
+    Packets: Sent = 3, Received = 3, Lost = 0 (0% loss),
+Approximate round trip times in milli-seconds:
+    Minimum = 0ms, Maximum = 0ms, Average = 0ms
+test job::tests::membership_probes_detect_a_job_member ... ok
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+
+Ping statistics for 127.0.0.1:
+    Packets: Sent = 4, Received = 4, Lost = 0 (0% loss),
+Approximate round trip times in milli-seconds:
+    Minimum = 0ms, Maximum = 0ms, Average = 0ms
+test job::tests::managed_child_is_assigned_at_creation_survives_job_close_and_completes_unaided ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.13s
+
+
+running 15 tests
+test current_process_memory_bytes_reports_something ... ok
+test self_identity_is_stable_and_exact ... ok
+test os_info_reports_windows_build ... ok
+test memory_notification_object_queries_state ... ok
+test mismatched_creation_marker_detects_reuse ... ok
+test session_context_is_queryable_and_separate_from_identity ... ok
+test performance_info_returns_sane_page_counters ... ok
+test monitor_collects_healthy_sample ... ok
+test logical_cpu_count_matches_environment ... ok
+test thousand_start_stop_cycles_return_handles_to_baseline ... ok
+test exited_process_identity_is_unreachable ... ok
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+test process_scan_enumerates_and_queries_real_processes ... ok
+test watch_is_cancellable_through_console_event ... ok
+test process_rates_over_two_real_scans_are_sane ... ok
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+
+Ping statistics for 127.0.0.1:
+    Packets: Sent = 10, Received = 10, Lost = 0 (0% loss),
+Approximate round trip times in milli-seconds:
+    Minimum = 0ms, Maximum = 1ms, Average = 0ms
+test watch_on_one_second_cadence_emits_no_burst ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.71s
+
+
+running 1 test
+test probe_pipe_roundtrip_step_by_step ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -313,6 +313,12 @@ impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
             ramshaper_core::guardrails::TripTrigger::StaleSafetyInput => {
                 ramshaper_core::coordinator::RestoreTrigger::StaleSafetyInput
             }
+            ramshaper_core::guardrails::TripTrigger::SystemResumed => {
+                // The agent can only observe the RESUME (it was not
+                // scheduled during the sleep); the contract's restore
+                // reason for the journal is the suspend that caused it.
+                ramshaper_core::coordinator::RestoreTrigger::Suspend
+            }
         };
         let outcome = self.engine.restore_once(
             &self.journal,
@@ -833,6 +839,32 @@ mod tests {
         assert!(tripped);
         assert_eq!(loop_.stats().restored, 1);
         assert!(loop_.findings().is_empty());
+    }
+
+    #[test]
+    fn system_resume_trips_the_suspend_restore() {
+        // Contract 14 §6: a suspend notification initiates restoration.
+        // The agent observes the resume (interrupt-time divergence in the
+        // ticker) and the journal records the Suspend reason.
+        let journal = FakeJournal::default();
+        journal.seed_applied(4242, 500_000);
+        let mut loop_ = PolicyLoop::new(
+            PolicyLoopConfig { enabled: true },
+            journal,
+            FakeActuator::new(0x4000),
+        );
+        let tripped = loop_.observe_safety(
+            &SafetyObservation::SystemResumed { sleep_ms: 45_678 },
+            1_000,
+        );
+        assert!(tripped);
+        assert_eq!(loop_.stats().restored, 1);
+        assert!(loop_.findings().is_empty());
+        // And with nothing outstanding, a resume observation is refused
+        // honestly (no restore fabricated).
+        let retripped =
+            loop_.observe_safety(&SafetyObservation::SystemResumed { sleep_ms: 12 }, 2_000);
+        assert!(!retripped);
     }
 
     #[test]

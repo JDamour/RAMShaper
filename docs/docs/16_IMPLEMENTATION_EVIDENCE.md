@@ -2183,3 +2183,42 @@ flight).
 **Not covered:** the sibling's in-flight guardrails/policy_loop changes
 (reviewed when they land); owner-gated cohort claims remain out of scope
 for this machine.
+
+# Suspend/resume restore trigger — interrupt-time divergence, 2026-10-26
+
+**Scope implemented:** the last contract 14 §6 trigger with no production
+path — `RestoreTrigger::Suspend` existed (tested) but nothing produced
+it, and AT-11 names suspend among the restore triggers. Design (ADR-042):
+the windowless agent detects sleep from the interrupt-time domain —
+`ramshaper_windows::power::interrupt_time_pair()` (GetTickCount64 advances
+through sleep; QueryUnbiasedInterruptTime pauses; new
+`Win32_System_WindowsProgramming` feature), core `ResumeDetector` (pure:
+growth of the biased−unbiased difference beyond 1 s between two
+observations = slept; immune to wall-clock changes and to agent self-
+suspension by construction), `SafetyObservation::SystemResumed{sleep_ms}`
+→ `TripTrigger::SystemResumed` (code `system_resumed`) → the loop's
+`RestoreTrigger::Suspend` (the agent observes the resume; the journal
+reason is the suspend). The 0.3.35 ticker samples the detector **every
+pass before the outstanding-action early-return** (a stale baseline would
+misread the first post-idle jump) and feeds a detected resume even with
+nothing outstanding — refused honestly.
+
+**Evidence:** live probe (both counters advance, accumulator stable while
+awake); pure detector test (baseline, jitter, jump-with-size, reset
+baseline); loop trip test (restores; refuses when nothing outstanding).
+**Boundary:** a real sleep is never forced in tests (operator-hostile);
+the chain is parts-covered + inspection-verified, the session-lock
+standard.
+
+**Parallel-flake repair found during the gate run:** the AT-14
+inheritance test missed the child's whole life once under parallel test
+threads — Toolhelp snapshots fail transiently under process churn
+(documented), and the full `scan_processes` probe was too heavy to retry
+enough. The test now probes with the light `enumerate_pid_parents` map at
+150 ms over a 25 s window and reports failed-probe counts; the workspace
+suite passes in parallel mode after the fix.
+
+**Gates (2026-10-26):** fmt clean; clippy `-D warnings` clean on
+core/windows/agent; guardrails 9/0, windows 46/0, agent 61/0 serial;
+workspace **382 passed, 0 failed** parallel
+(`docs/evidence/2026-10-26-suspend-trigger/`). ADR-042.

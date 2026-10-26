@@ -794,3 +794,37 @@ enforce itself.
 deviation is named and refused. The analysis labels stay honest
 (exploratory without a plan), and the RS-024 Stage C wizard can generate
 these documents.
+
+## ADR-042: Suspend is detected from the interrupt-time domain — Accepted (implemented 2026-10-26; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+
+**Context:** contract 14 §6 lists suspend among the restore triggers and
+AT-11 names it, but the agent is a windowless console app: the documented
+event-driven routes (`RegisterSuspendResumeNotification`,
+`WM_POWERBROADCAST`) need a window or a service handle it does not have.
+Meanwhile the 1 s policy ticker already runs for the agent's lifetime.
+
+**Decisions:**
+- Sleep is detected as **growth of the biased−unbiased interrupt-time
+  difference** between ticker passes: `GetTickCount64` includes sleep,
+  `QueryUnbiasedInterruptTime` excludes it, so the difference is
+  accumulated sleep and a >1 s jump between passes means the system
+  slept (modern standby and hibernation included). No wall clock is
+  read, so clock changes never trip; both counters are system-wide, so
+  the agent itself being suspended never trips.
+- The detector is sampled **every pass, before the outstanding-action
+  early-return** — a baseline that goes stale during idle periods would
+  misread the first post-idle observation.
+- The observation vocabulary records `SystemResumed { sleep_ms }`
+  (the agent can only observe the resume); the journal's restore reason
+  is the contract's `Suspend`. A threshold of 1 s sits far above the
+  ~15.6 ms counter granularity and far below any real sleep.
+- A real sleep is never forced in tests (operator-hostile); the chain is
+  covered by parts — live adapter probe, pure detector, loop trip — plus
+  inspection of the ticker glue, the same standard as the session-lock
+  trigger (ADR-040).
+
+**Consequences:** every contract 14 §6 restore trigger now has a
+production path and a tested vocabulary entry; the experiment invalidates
+across sleep even when the wall-clock TTL alone would not catch a short
+sleep, with the suspend reason on the journal record for the RS-013
+history surface.

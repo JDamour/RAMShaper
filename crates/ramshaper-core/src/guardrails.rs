@@ -166,6 +166,15 @@ pub enum SafetyObservation {
         /// Age of the last valid observation, ms.
         age_ms: u64,
     },
+    /// The system slept and has resumed (detected as a jump of the
+    /// biased−unbiased interrupt-time difference). The experiment is
+    /// invalid across a sleep: the user walked away, wall-clock TTLs
+    /// aged, and the pre-sleep observations no longer describe the
+    /// machine.
+    SystemResumed {
+        /// How much sleep the detection attributes to the gap, ms.
+        sleep_ms: u64,
+    },
 }
 
 /// What the guardrails decided.
@@ -198,6 +207,9 @@ pub enum TripTrigger {
     SessionLock,
     /// Stale safety input.
     StaleSafetyInput,
+    /// The system resumed from sleep; the contract's restore reason is
+    /// recorded as `Suspend`.
+    SystemResumed,
 }
 
 impl TripTrigger {
@@ -209,6 +221,7 @@ impl TripTrigger {
             Self::ForegroundReturned => "foreground_returned",
             Self::SessionLock => "session_lock",
             Self::StaleSafetyInput => "stale_safety_input",
+            Self::SystemResumed => "system_resumed",
         }
     }
 }
@@ -259,6 +272,54 @@ pub fn evaluate(observation: &SafetyObservation, now_unix_ms: u64) -> Decision {
             trigger: TripTrigger::StaleSafetyInput,
             finding: None,
         },
+        SafetyObservation::SystemResumed { sleep_ms: _ } => Decision::Trip {
+            trigger: TripTrigger::SystemResumed,
+            finding: None,
+        },
+    }
+}
+
+/// Detects system sleep as a *change* of the biased−unbiased
+/// interrupt-time difference (windows adapter `interrupt_time_pair`):
+/// the difference equals accumulated sleep since boot, so growth between
+/// two observations means the system slept in between. Pure and testable;
+/// the ticker holds one detector for the agent's lifetime.
+///
+/// Immunities (documented, both by construction):
+/// - wall-clock changes never matter (no wall clock is read);
+/// - the agent process itself being suspended never matters (both
+///   counters are system-wide and keep running, so the difference does
+///   not grow).
+#[derive(Debug, Default)]
+pub struct ResumeDetector {
+    last_diff_ms: Option<u64>,
+}
+
+/// Growth of the sleep accumulator between two ticker passes that counts
+/// as a sleep. Both counters tick at the OS interrupt granularity
+/// (~15.6 ms), so measurement jitter is small; a real sleep is at least
+/// seconds. One full second keeps jitter out while catching any real
+/// sleep the 1 s ticker could observe.
+pub const RESUME_SLEEP_GAP_MS: u64 = 1_000;
+
+impl ResumeDetector {
+    /// Observe one `(biased_ms − unbiased_ms)` sample. Returns
+    /// `Some(slept_ms)` when the accumulator grew by more than
+    /// [`RESUME_SLEEP_GAP_MS`] since the previous observation, `None`
+    /// otherwise (including on the first observation, which only anchors
+    /// the baseline).
+    pub fn observe(&mut self, sleep_accumulated_ms: u64) -> Option<u64> {
+        match self.last_diff_ms {
+            None => {
+                self.last_diff_ms = Some(sleep_accumulated_ms);
+                None
+            }
+            Some(previous) => {
+                self.last_diff_ms = Some(sleep_accumulated_ms);
+                let grew = sleep_accumulated_ms.saturating_sub(previous);
+                (grew > RESUME_SLEEP_GAP_MS).then_some(grew)
+            }
+        }
     }
 }
 
@@ -394,6 +455,13 @@ mod tests {
                 finding: None,
             }
         );
+        assert_eq!(
+            evaluate(&SafetyObservation::SystemResumed { sleep_ms: 45_000 }, 4),
+            Decision::Trip {
+                trigger: TripTrigger::SystemResumed,
+                finding: None,
+            }
+        );
     }
 
     #[test]
@@ -405,5 +473,28 @@ mod tests {
         );
         assert_eq!(TripTrigger::SessionLock.code(), "session_lock");
         assert_eq!(TripTrigger::StaleSafetyInput.code(), "stale_safety_input");
+        assert_eq!(TripTrigger::SystemResumed.code(), "system_resumed");
+    }
+
+    #[test]
+    fn resume_detector_needs_a_baseline_and_a_real_jump() {
+        let mut detector = ResumeDetector::default();
+        // First observation only anchors the baseline.
+        assert_eq!(detector.observe(100), None);
+        // Small growth while awake (interrupt jitter, short scheduler
+        // stalls) is not a sleep — every step stays under the threshold.
+        assert_eq!(detector.observe(150), None);
+        assert_eq!(detector.observe(700), None);
+        // A jump past the threshold is the sleep, reported with its size.
+        assert_eq!(detector.observe(700 + 45_678), Some(45_678));
+        // Awake again: no further trips.
+        assert_eq!(detector.observe(700 + 45_678 + 90), None);
+        // A shrinking accumulator (counter reset) is not a sleep — it is
+        // ignored, and the next growth is measured from the new baseline.
+        assert_eq!(detector.observe(50), None);
+        assert_eq!(
+            detector.observe(50 + RESUME_SLEEP_GAP_MS + 50),
+            Some(RESUME_SLEEP_GAP_MS + 50)
+        );
     }
 }

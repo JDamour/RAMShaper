@@ -16,6 +16,8 @@
 //!   foreground, priority class, children, capability probe, classification,
 //!   session-lock state (WTS).
 //! - [`osinfo`] — OS/build metadata (`RtlGetVersion`, registry, `GetNativeSystemInfo`).
+//! - [`power`] — interrupt-time pair for suspend detection (biased vs
+//!   unbiased time: the difference is accumulated sleep).
 //! - [`monitor`] — read-only adapter implementing the platform contracts.
 //!
 //! Design rules (docs 04 §B, contract 14): minimal access rights, checked
@@ -35,6 +37,7 @@ pub mod monitor;
 pub mod osinfo;
 pub mod perfinfo;
 pub mod pipe;
+pub mod power;
 pub mod priority;
 pub mod processes;
 pub mod token;

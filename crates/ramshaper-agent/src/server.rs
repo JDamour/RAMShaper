@@ -345,12 +345,19 @@ pub fn serve(
                 .name("ramshaper-policy-ticker".to_string())
                 .spawn(move || {
                     use ramshaper_core::watch::{WaitHandle as _, WaitOutcome};
+                    // Sleep detection state for the agent's lifetime: the
+                    // accumulator must be sampled EVERY pass (even with no
+                    // outstanding action) so a resume right after an idle
+                    // period is not misread.
+                    let mut resumes = ramshaper_core::guardrails::ResumeDetector::default();
                     loop {
                         if ticker_stop.wait(1_000) == WaitOutcome::Signaled {
                             break;
                         }
                         let now = ramshaper_core::SystemClock.unix_epoch_ms();
-                        feed_safety_observations(&ticker_shared, &mut loop_, now);
+                        let resumed = ramshaper_windows::power::interrupt_time_pair()
+                            .and_then(|(biased, unbiased)| resumes.observe(biased - unbiased));
+                        feed_safety_observations(&ticker_shared, &mut loop_, now, resumed);
                         loop_.tick(now);
                     }
                 })
@@ -470,7 +477,12 @@ pub fn serve(
 /// - session lock: a locked interactive session (`WTSQuerySessionInformationW`,
 ///   polled each pass) trips immediately — the user is walking away from
 ///   the consented experiment; `Unknown` lock state never fabricates a
-///   trip.
+///   trip;
+/// - suspend/resume: the ticker's resume detector (biased−unbiased
+///   interrupt-time growth > 1 s since the previous pass) trips
+///   `SystemResumed` — the experiment is invalid across a sleep. The
+///   detector is sampled every pass, before the outstanding-action
+///   early-return, so the baseline never goes stale.
 fn feed_safety_observations(
     shared: &Shared,
     loop_: &mut crate::policy_loop::PolicyLoop<
@@ -478,9 +490,17 @@ fn feed_safety_observations(
         ramshaper_windows::priority::WindowsPriorityActuator,
     >,
     now_unix_ms: u64,
+    resumed: Option<u64>,
 ) {
     use ramshaper_core::eligibility::FocusObservation;
     use ramshaper_core::guardrails::SafetyObservation;
+
+    // Resume from sleep: the most fundamental invalidation, evaluated
+    // before the early-return (observe_safety no-ops safely when nothing
+    // is outstanding).
+    if let Some(sleep_ms) = resumed {
+        loop_.observe_safety(&SafetyObservation::SystemResumed { sleep_ms }, now_unix_ms);
+    }
 
     let Some(parent) = loop_.outstanding_applied_identity() else {
         // Nothing outstanding: only snapshot staleness could matter, and

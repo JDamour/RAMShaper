@@ -603,42 +603,38 @@ fn child_spawned_after_apply_is_inherited_then_trips_the_restore() {
     );
 
     // Wait for the child to appear under the consented parent. The parent
-    // spawns it 3 s after ITS start; a cold PowerShell start on a loaded
-    // machine can push that well past a tight window, so wait 15 s and
-    // diagnose on timeout.
-    let mut child_info = None;
-    let child_deadline = Instant::now() + Duration::from_secs(15);
+    // spawns it 3 s after ITS start. The light Toolhelp parent-map is the
+    // primary probe: under parallel-test churn the full scan's snapshot
+    // can fail transiently (the documented Toolhelp behavior), and the
+    // map is cheap enough to retry at 150 ms. Window 25 s covers the
+    // child's full ~10 s life even with heavy machine load.
+    let mut child_pid = None;
+    let mut failed_probes = 0u32;
+    let child_deadline = Instant::now() + Duration::from_secs(25);
     while Instant::now() < child_deadline {
-        let scan = processes::scan_processes();
-        if scan.scan_failure.is_none() {
-            if let Some(row) = scan
-                .processes
-                .iter()
-                .find(|r| r.parent_pid == pid && r.identity.pid != pid)
-            {
-                child_info = Some((row.identity, row.name.clone()));
-                break;
+        match processes::enumerate_pid_parents() {
+            Ok(rows) => {
+                if let Some(&(child, _)) = rows
+                    .iter()
+                    .find(|&&(candidate, parent)| parent == pid && candidate != pid)
+                {
+                    child_pid = Some(child);
+                    break;
+                }
             }
+            Err(_) => failed_probes += 1,
         }
-        std::thread::sleep(Duration::from_millis(250));
+        std::thread::sleep(Duration::from_millis(150));
     }
-    let (child_identity, child_name) = child_info.unwrap_or_else(|| {
-        let scan = processes::scan_processes();
+    let child_pid = child_pid.unwrap_or_else(|| {
         panic!(
-            "the parent must spawn its ping child; parent {} alive={}; same-parent rows: {:?}",
+            "the parent must spawn its ping child; parent {} alive={}; failed_probes={failed_probes}",
             pid,
             resolve_identity(pid).is_ok(),
-            scan.processes
-                .iter()
-                .filter(|r| r.parent_pid == pid)
-                .map(|r| (r.identity.pid, r.name.clone()))
-                .collect::<Vec<_>>()
         );
     });
-    assert!(
-        child_name.eq_ignore_ascii_case("ping.exe"),
-        "the spawned child is the ping fixture, got {child_name}"
-    );
+    // The child's exact identity, resolved fresh for the inheritance read.
+    let child_identity = resolve_identity(child_pid).expect("child identity resolvable");
 
     // THE INHERITANCE EVIDENCE: the child was created while the parent
     // held the applied class — it must have inherited Below Normal (this
