@@ -602,7 +602,7 @@ AT-15's full launcher-interruption lifecycle trace remains G4 rig work,
 and the RS-022/RS-023 group-accounting and consent tickets now build on a
 measured mechanism instead of the superseded sketch.
 
-## ADR-035: A/B analysis — nearest-rank endpoints, whole-block bootstrap, four labels — Accepted (implemented 2026-10-26; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+## ADR-036: A/B analysis — nearest-rank endpoints, whole-block bootstrap, four labels — Accepted (implemented 2026-10-26; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
 
 **Context:** RS-024 Stage B's analysis half and AT-20: the numbers a
 future A/B runner produces must be computable, reproducible and honestly
@@ -637,7 +637,7 @@ tests against hand-computed values, plus a live CLI run); the A/B runner
 that produces real trials remains owner-gated, and this module will simply
 consume its output.
 
-## ADR-036: Stage B pilot runner — counterbalanced AB/BA over a bounded CPU workload — Accepted (implemented 2026-10-26; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+## ADR-037: Stage B pilot runner — counterbalanced AB/BA over a bounded CPU workload — Accepted (implemented 2026-10-26; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
 
 **Context:** RS-024 Stage B's runner half: the primary endpoint needs a
 data source whose schedule, pairing and stop behavior follow doc 08 §3 —
@@ -670,3 +670,34 @@ built now, so the owner-gated actuator plugs into a finished harness.
 deliberately conservative (noise trips the guardrails and reads
 `regression`), which is the honest output for "no treatment, wide noise
 band" — the pilot's own note says it claims nothing.
+
+## ADR-038: Session consent — typed console act, never a flag or IPC — Accepted (implemented 2026-10-26; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+
+**Context:** the policy gate (RS-016's `PolicyGate`) ships disabled and
+nothing may enable it implicitly: contract 14 §5 makes startup Observe
+Only, bars profiles/imports/reconnects/login-startup from granting write
+permission, and §7 bars IPC from enabling policy mode. The shipped agent
+never exposed the gate at all, so there was no honest way to reach the
+tested preview/confirm path in the field.
+
+**Decisions:**
+- Opt-in is **one explicit argument carrying a real consequence**:
+  `--policy-journal <path>`. Requiring the path makes the operator state
+  where durable recovery intent lives; there is no default location and
+  no flag-only opt-in.
+- Enabling is a **typed console word** (`ENABLE`, strict, alone on the
+  line): an at-the-machine, human, per-session act that is never
+  persisted, never derivable from configuration, and never grantable over
+  IPC. End of input (non-interactive start) declines — a headless agent
+  cannot consent, which is the honest shape for now.
+- **Clean exit is a restore trigger**: `AgentHandle::stop` disables the
+  gate and drains outstanding records through the restore engine before
+  workers shut down; the next start runs startup reconciliation anyway
+  (belt and suspenders — the §6 rule "restart … returns to Observe Only"
+  is structural, since enable never persists).
+
+**Consequences:** the tested apply path is reachable in the field behind
+an honest consent act; RS-013's UI controls get a real, distinguishable
+counterpart (`Busy` "policy is disabled" vs `Unsupported` "no stage"); the
+remaining G3 evidence (child-inheritance probe, allowlist population)
+can now be produced on an enabled session.

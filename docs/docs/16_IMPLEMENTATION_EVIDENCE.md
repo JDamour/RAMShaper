@@ -1907,3 +1907,51 @@ Workspace gates: fmt clean, clippy `-D warnings` clean, **357 passed /
 **Not in this slice:** the preview/confirm consent UI (G3 flow, owner
 call); startup reconciliation surfacing in the UI beyond record states;
 the interactive AT-19 pass for the new page (checklist-ready, human task).
+
+# G3 consent path — session consent + clean-exit trigger, 2026-10-26
+
+**Scope implemented:** `ramshaper-agent::consent` + the agent bin's
+`--policy-journal <path>` + the `AgentHandle::stop` clean-exit trigger.
+Before this slice the policy gate existed only behind the API — the
+shipped agent was always started gateless (`serve` received `None`), so no
+operator could ever reach it. Contract 14 §5 shape, now shipped: the
+explicit journal path is the only opt-in (the operator states where
+recovery records live; no default, no bare flag, no config route); the
+gate starts **disabled** — Observe Only with the restore loop and startup
+reconciliation active; enabling is the **typed console consent** (exact
+word `ENABLE`, strict: case-sensitive, alone on the line; end of input
+declines, never guesses), per-session, never persisted, never grantable
+over IPC. User exclusions flow into the gate; the production allowlist
+stays empty until RS-024 Stage B evidence exists. The clean-exit trigger
+(§6's "clean agent exit") disables the gate and restores every outstanding
+record through the engine before the workers shut down, while the pipe
+still serves.
+
+**Pinned by test (+5, all live on this rig):** the strict consent decision
+(`only_the_exact_word_consents`, `everything_else_stays_observe_only` — a
+lowercase word, extra words, an empty line and EOF all decline); the flag
+(`policy_journal_flag_selects_the_policy_stage`, usage error without a
+value); the real-pipe distinction
+(`policy_commands_with_a_present_but_disabled_gate_answer_busy_not_unsupported`:
+gateless agent → `Unsupported`, journal-backed but unconsented agent →
+`Busy` naming the disabled session); and
+`stopping_the_agent_runs_the_clean_exit_trigger` — an applied action on
+the test's spawned `ping` child (injected Elevated + allowlist seam, the
+RS-016 gate-evidence stand-in) is restored to Normal by `handle.stop()`,
+the gate ends disabled, and the journal record is terminal `Restored`.
+
+**Workspace gates (2026-10-26):** `cargo fmt -p ramshaper-agent` clean;
+`cargo clippy -p ramshaper-agent --all-targets -- -D warnings` clean;
+agent crate 25 lib + 15 ipc + 5 policy_ipc + 6 integration green; full
+workspace **357 passed, 0 failed** (run in
+`docs/evidence/2026-10-26-g3-consent-path/workspace-run.txt`). ADR-038.
+
+**Not in this slice (recorded, not hidden):** the UI consent dialog
+(RS-013's controls render refusals; the consent act lives on the agent
+console until the UI session builds it); the eligibility allowlist (empty
+by design); AT-14's live child-inheritance probe (needs the enabled
+session with a populated allowlist — now startable, evidence pending).
+**Collision note:** the RS-013 session's 59fd21e swept this slice's agent
+sources into 0.3.32 while `consent.rs` was untracked — 0.3.32 as committed
+did not compile; 0.3.33 completes it (the green gate numbers in both
+entries were measured on the integrated working tree).

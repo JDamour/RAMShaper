@@ -313,3 +313,107 @@ fn restore_of_an_unknown_id_is_an_explained_refusal() {
         other => panic!("expected InvalidArgument, got {other:?}"),
     }
 }
+
+#[test]
+fn stopping_the_agent_runs_the_clean_exit_trigger() {
+    // Contract 14 §6 lists "clean agent exit" among the restore triggers:
+    // AgentHandle::stop disables the gate (no new applies) and restores
+    // every outstanding record through the engine BEFORE the workers shut
+    // down — the child must be back at Normal after the stop, with the
+    // journal record terminal.
+    use ramshaper_agent::dispatch::ConfigSummary;
+    use ramshaper_agent::server::serve;
+    use ramshaper_core::coordinator::ActionJournal as _;
+    use ramshaper_core::journal::ActionState;
+    use ramshaper_core::watch::WatchConfig;
+    use ramshaper_windows::event::ManualResetEvent;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    let mut child = spawn_quiet_child(10);
+    let pid = child.id();
+    let identity = resolve_identity(pid).expect("fresh child identity");
+    let gate = std::sync::Arc::new(test_gate());
+    gate.enable();
+
+    let stop = Arc::new(ManualResetEvent::new().expect("stop event"));
+    let handle = serve(
+        Arc::clone(&stop),
+        format!(r"\.\pipe\ramshaper-test-cleanexit-{}", std::process::id()),
+        WatchConfig::new(500).expect("cadence"),
+        ConfigSummary {
+            mode: "observe_only".to_string(),
+            profile: "balanced".to_string(),
+            exclusions: Vec::new(),
+        },
+        Some(Arc::clone(&gate)),
+    )
+    .expect("agent serves");
+    std::thread::sleep(Duration::from_millis(200));
+
+    // Apply through the gate (the same injected-Elevated seam as the full
+    // loop test; the pipe's real collector is not the pressure source).
+    let preview = gate.preview(
+        &PreviewActionRequest {
+            action_id: "clean-exit-1".to_string(),
+            pid,
+            creation_filetime: identity.creation_filetime_100ns.to_string(),
+            image_name: "ping.exe".to_string(),
+            ttl_ms: None,
+        },
+        PressureLevel::Elevated,
+        NOW,
+    );
+    match preview {
+        ramshaper_agent::policy::ResponseData::Ok(value) => {
+            assert_eq!(value["verdict"], "offered", "got {value}");
+        }
+        ramshaper_agent::policy::ResponseData::Err { code, message, .. } => {
+            panic!("preview denied: {code:?} {message}")
+        }
+    }
+    let confirm = gate.confirm(
+        &ConfirmActionRequest {
+            action_id: "clean-exit-1".to_string(),
+        },
+        NOW + 1_000,
+    );
+    match confirm {
+        ramshaper_agent::policy::ResponseData::Ok(value) => {
+            assert_eq!(value["outcome"], "applied", "got {value}");
+        }
+        ramshaper_agent::policy::ResponseData::Err { code, message, .. } => {
+            panic!("confirm failed: {code:?} {message}");
+        }
+    }
+    assert_eq!(
+        eligibility::observe_priority_class(pid),
+        ramshaper_core::eligibility::PriorityClassObservation::Other {
+            detail: "BELOW_NORMAL_PRIORITY_CLASS".to_string(),
+        },
+        "the live child must be at Below Normal before the stop"
+    );
+
+    // The clean-exit trigger: stop() restores first, then joins.
+    handle.stop();
+
+    assert_eq!(
+        eligibility::observe_priority_class(pid),
+        ramshaper_core::eligibility::PriorityClassObservation::Normal,
+        "the clean exit must have restored the applied setting"
+    );
+    assert!(!gate.enabled(), "the gate ends the session disabled");
+    let snapshot = gate
+        .journal_clone()
+        .record_snapshot("clean-exit-1")
+        .expect("journal readable")
+        .expect("record exists");
+    assert_eq!(
+        snapshot.state,
+        ActionState::Restored,
+        "the journal shows the terminal restore"
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+}

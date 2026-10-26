@@ -1,0 +1,20 @@
+## cargo test -p ramshaper-agent --all-targets (consent path slice)
+running 25 tests
+test consent::tests::everything_else_stays_observe_only ... ok
+test consent::tests::only_the_exact_word_consents ... ok
+test policy_loop::tests::disabled_loop_is_a_noop_everywhere ... ok
+test policy_loop::tests::missed_deadline_counts_once_and_never_fakes_success ... ok
+test policy_loop::tests::safety_trip_restores_the_parent ... ok
+test policy_loop::tests::startup_recovery_reconciles_without_reapplying ... ok
+test policy_loop::tests::startup_recovery_restores_a_live_write ... ok
+test policy_loop::tests::ttl_tick_restores_an_expired_action ... ok
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+running 5 tests
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 15 tests
+test policy_commands_with_a_present_but_disabled_gate_answer_busy_not_unsupported ... ok
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.57s
+running 6 tests
+test policy_gate_full_loop_applies_and_restores_a_spawned_child ... ok
+test stopping_the_agent_runs_the_clean_exit_trigger ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
