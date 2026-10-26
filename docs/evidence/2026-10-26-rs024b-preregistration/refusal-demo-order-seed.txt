@@ -1,0 +1,2 @@
+preregistration deviation: workload.order_seed: planned 4242, attempted 999
+error: the run deviates from the frozen preregistration target/prereg.json; refusing

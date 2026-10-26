@@ -2094,3 +2094,38 @@ forced live, for the same operator-hostility reason. Gates: fmt/clippy
 (`-D warnings`) clean on core/windows/agent; windows **45/0**, agent
 **60/0**, workspace **373/0**
 (`docs/evidence/2026-10-26-session-lock-trigger/`). ADR-040.
+
+---
+
+# Trial preregistration — executable enforcement (RS-024 Stage B), 2026-10-26
+
+**Scope implemented:** `ramshaper-bench::prereg` (+6 tests) and
+`--preregistration` on both `workload-ab` and `analyze-ab`: a frozen JSON
+plan (workload schedule incl. the AB/BA order seed, bootstrap parameters,
+decision thresholds, nonempty workload declaration; closed schema,
+structural rules at parse) that both tools verify before acting — refusing
+with **every deviation named** (order-seed re-rolling after peeking is
+explicitly covered). Defaults without a plan remain for exploratory runs
+(the analysis labels those honestly).
+
+**Pinned by test:** the sample plan parses and verifies clean against a
+matching spec; unknown fields, wrong schema versions, sub-minimum event
+counts, empty declarations and nonpositive thresholds are refused at
+parse; a mismatching run names **all five** workload deviations (not just
+the first); seed/resample and threshold deviations are caught on the
+analysis side; matching plans verify clean.
+
+**Live evidence** (`docs/evidence/2026-10-26-rs024b-preregistration/`):
+a deviation on the order seed → `workload.ab ... refusing` with the
+deviation named; a matching plan executes; the illustrative plan file
+itself (marked as a demo, not a real trial's preregistration).
+
+**Workspace gates (2026-10-26):** bench fmt/clippy `-D warnings`/tests
+24 passed / 0 failed; workspace `cargo test --locked` **373 passed,
+0 failed** (bench 24: 3 Stage A + 8 AT-20 + 6 workload + 6 prereg + 1
+percentile; the concurrent session's 0.3.34–0.3.37 increments included).
+
+**Not in this slice (recorded, not hidden):** the real trial (owner-gated
+actuation consent), RS-024 Stage C plan generation in the wizard, and the
+preregistration's declared_at ordering versus collection (operator
+discipline, documented).

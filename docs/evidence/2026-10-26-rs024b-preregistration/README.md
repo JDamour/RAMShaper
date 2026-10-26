@@ -1,0 +1,1 @@
+Preregistration demo: the frozen plan (seed 4242, 10 blocks, 100 events, order_seed 4242) is enforced by workload-ab and analyze-ab. Deviating runs are refused with every deviation named (order-seed re-roll included); a matching plan executes. This demo plan is illustrative, not a real trial's preregistration.

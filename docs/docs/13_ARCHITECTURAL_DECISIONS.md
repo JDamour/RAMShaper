@@ -763,3 +763,34 @@ pump the agent does not have.
 **Consequences:** all contract §6 restore triggers now fire live in the
 shipped agent; the safety-feed shape (stateless, event-shaped, positive
 observations only) is complete and uniform.
+
+## ADR-041: Trial preregistration is executable — the bench refuses deviations — Accepted (implemented 2026-10-26; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+
+**Context:** doc 08 §3–§4: workload needs "declared before the trial, not
+after inspecting results" and thresholds "frozen or replaced with a
+justified workload-specific rule before data collection". Prose does not
+enforce itself.
+
+**Decisions:**
+- A **preregistration document** (`ramshaper.preregistration.v1`, JSON,
+  closed schema) freezes the workload schedule (events, warmup, task
+  effort, block count **and the AB/BA order seed** — a randomization seed
+  left free could be re-rolled after peeking), the bootstrap parameters
+  (resamples + seed) and the decision thresholds, plus a nonempty
+  workload declaration.
+- `workload-ab` and `analyze-ab` accept `--preregistration <file>` and
+  **refuse (exit 2) any deviation, naming every one** — not just the
+  first. Structural rules (≥100 events, nonempty declaration, positive
+  thresholds) are checked at parse; a malformed or future-schema plan is
+  refused before any trial.
+- The document is **data, not authority**: it gates only the bench tools'
+  own consistency; it grants nothing and binds no OS behavior.
+- Defaults without a preregistration remain available for exploratory
+  runs — the exploratory label in the analysis is the honest marker that
+  no frozen plan governed them.
+
+**Consequences:** a real Stage B trial now has a machine-checkable
+"frozen before collection" story: freeze the plan, run, analyze — any
+deviation is named and refused. The analysis labels stay honest
+(exploratory without a plan), and the RS-024 Stage C wizard can generate
+these documents.

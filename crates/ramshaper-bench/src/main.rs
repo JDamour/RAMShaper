@@ -14,6 +14,7 @@
 #![deny(unsafe_code)]
 
 pub mod analysis;
+pub mod prereg;
 pub mod workload;
 
 use std::process::ExitCode;
@@ -68,6 +69,7 @@ fn main() -> ExitCode {
     let mut warmup: Option<usize> = None;
     let mut task_iters: Option<u64> = None;
     let mut pilot_blocks: Option<usize> = None;
+    let mut prereg_path: Option<std::path::PathBuf> = None;
 
     let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {
@@ -143,6 +145,13 @@ fn main() -> ExitCode {
                     }
                 }
             }
+            "--preregistration" => match args.next() {
+                Some(value) => prereg_path = Some(std::path::PathBuf::from(value)),
+                None => {
+                    eprintln!("error: --preregistration requires a path");
+                    return ExitCode::from(2);
+                }
+            },
             "--warmup" => match args
                 .next()
                 .and_then(|v| v.to_string_lossy().parse::<usize>().ok())
@@ -182,10 +191,16 @@ fn main() -> ExitCode {
             json,
             config_path.as_ref(),
         ),
-        Some("analyze-ab") => run_analyze_ab(blocks_path, seed, json),
-        Some("workload-ab") => {
-            run_workload_ab(pilot_blocks, iterations, warmup, task_iters, seed, json)
-        }
+        Some("analyze-ab") => run_analyze_ab(blocks_path, seed, prereg_path.as_ref(), json),
+        Some("workload-ab") => run_workload_ab(
+            pilot_blocks,
+            iterations,
+            warmup,
+            task_iters,
+            seed,
+            prereg_path.as_ref(),
+            json,
+        ),
         _ => {
             eprintln!("error: missing harness name");
             eprintln!(
@@ -290,6 +305,13 @@ fn load_config(path: Option<&std::path::PathBuf>) -> Result<ramshaper_core::Core
     }
 }
 
+/// Load and parse a preregistration file.
+fn load_preregistration(path: &std::path::Path) -> Result<prereg::Preregistration, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("cannot read preregistration {}: {error}", path.display()))?;
+    prereg::Preregistration::parse(&text)
+}
+
 /// The Stage B pilot: execute the counterbalanced synthetic workload and
 /// analyze it. The treatment is observe-only (no policy injection) until
 /// the owner-gated consent flow enables it.
@@ -299,6 +321,7 @@ fn run_workload_ab(
     warmup: Option<usize>,
     task_iters: Option<u64>,
     seed: Option<u64>,
+    prereg_path: Option<&std::path::PathBuf>,
     json: bool,
 ) -> ExitCode {
     use workload::{into_analysis_blocks, run_ab_pilot, stop_control, WorkloadSpec};
@@ -314,6 +337,26 @@ fn run_workload_ab(
         return ExitCode::from(2);
     }
     let blocks = blocks.unwrap_or(10); // doc 08 §3 pilot minimum
+                                       // Frozen plan: the trial may not deviate from it (doc 08 §4).
+    if let Some(path) = prereg_path {
+        let parsed = match load_preregistration(path) {
+            Ok(parsed) => parsed,
+            Err(message) => {
+                eprintln!("error: {message}");
+                return ExitCode::from(2);
+            }
+        };
+        if let Err(deviations) = prereg::verify_workload(&parsed, &spec, blocks) {
+            for deviation in &deviations {
+                eprintln!("preregistration deviation: {deviation}");
+            }
+            eprintln!(
+                "error: the run deviates from the frozen preregistration {}; refusing",
+                path.display()
+            );
+            return ExitCode::from(2);
+        }
+    }
     let stop = stop_control();
     let noop = || {};
     eprintln!(
@@ -385,6 +428,7 @@ fn run_workload_ab(
 fn run_analyze_ab(
     blocks_path: Option<std::path::PathBuf>,
     seed: Option<u64>,
+    prereg_path: Option<&std::path::PathBuf>,
     json: bool,
 ) -> ExitCode {
     use analysis::{analyze, AbReport, Block, BootstrapConfig, Guardrails, SafetyReport};
@@ -411,6 +455,31 @@ fn run_analyze_ab(
         seed: seed.unwrap_or_else(|| BootstrapConfig::default().seed),
         ..BootstrapConfig::default()
     };
+    // Frozen plan: the analysis may not deviate from it (doc 08 §4).
+    if let Some(plan_path) = prereg_path {
+        let parsed = match load_preregistration(plan_path) {
+            Ok(parsed) => parsed,
+            Err(message) => {
+                eprintln!("error: {message}");
+                return ExitCode::from(2);
+            }
+        };
+        if let Err(deviations) = prereg::verify_analysis(
+            &parsed,
+            &config,
+            &Guardrails::default(),
+            analysis::MIN_BLOCKS_FOR_CONFIRMATORY,
+        ) {
+            for deviation in &deviations {
+                eprintln!("preregistration deviation: {deviation}");
+            }
+            eprintln!(
+                "error: the analysis deviates from the frozen preregistration {}; refusing",
+                plan_path.display()
+            );
+            return ExitCode::from(2);
+        }
+    }
     // Fixture analysis: this offline path feeds no safety observations
     // (the runner records them); the empty report keeps the label rules
     // fully exercisable without fabricating a pass.

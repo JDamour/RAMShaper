@@ -1,0 +1,2 @@
+preregistration deviation: bootstrap.seed: planned 4242, attempted 1234
+error: the analysis deviates from the frozen preregistration target/prereg.json; refusing
