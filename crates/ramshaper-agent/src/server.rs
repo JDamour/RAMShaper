@@ -323,7 +323,12 @@ pub fn serve(
     // Startup reconciliation (contract 14 §6): restore outstanding records
     // BEFORE serving, through the restore-direction loop (`policy_loop`).
     // The policy gate itself is constructed disabled, and nothing in the
-    // agent enables it — startup is Observe Only.
+    // agent enables it — startup is Observe Only. The same loop then keeps
+    // running on a 1 s ticker: TTL-expiry and due-retry restores, plus the
+    // safety-observation feed (children / focus / staleness of the
+    // outstanding target), so the contract's restore triggers actually
+    // fire in the shipped agent rather than only in tests.
+    let mut policy_ticker: Option<std::thread::JoinHandle<()>> = None;
     if let Some(gate) = &shared.policy {
         let mut loop_ = crate::policy_loop::PolicyLoop::new(
             crate::policy_loop::PolicyLoopConfig { enabled: true },
@@ -332,6 +337,25 @@ pub fn serve(
         );
         let resolved = loop_.startup_recovery(ramshaper_core::SystemClock.unix_epoch_ms());
         eprintln!("state=startup_recovery resolved={resolved}");
+
+        let ticker_stop = Arc::clone(&stop);
+        let ticker_shared = Arc::clone(&shared);
+        policy_ticker = Some(
+            std::thread::Builder::new()
+                .name("ramshaper-policy-ticker".to_string())
+                .spawn(move || {
+                    use ramshaper_core::watch::{WaitHandle as _, WaitOutcome};
+                    loop {
+                        if ticker_stop.wait(1_000) == WaitOutcome::Signaled {
+                            break;
+                        }
+                        let now = ramshaper_core::SystemClock.unix_epoch_ms();
+                        feed_safety_observations(&ticker_shared, &mut loop_, now);
+                        loop_.tick(now);
+                    }
+                })
+                .map_err(|e| format!("cannot start policy ticker: {e}"))?,
+        );
     }
 
     // Collector: samples on the watch cadence, publishes to shared state.
@@ -413,15 +437,99 @@ pub fn serve(
             .map_err(|e| format!("cannot start accept loop: {e}"))?
     };
 
+    let mut workers = vec![collector, accept];
+    if let Some(ticker) = policy_ticker {
+        workers.push(ticker);
+    }
+
     Ok(AgentHandle {
         stop,
-        workers: vec![collector, accept],
+        workers,
         accept_error,
         canceller,
         pipe_name,
         instance_id,
         policy,
     })
+}
+
+/// The ticker's safety feed: observe the outstanding Applied record's
+/// target through the R-03 adapters and hand the observations to the loop.
+/// Every observation is **stateless and event-shaped**:
+///
+/// - children: an applied target had **zero** live children at apply time
+///   (the leaf-workload eligibility check denied otherwise), so any child
+///   row in a fresh scan is a new descendant — the AT-14 trip. The scan
+///   supplies the child's identity and image for the finding; a failed
+///   scan is skipped honestly (no fabricated observation);
+/// - focus: only a positive "target is foreground" observation trips
+///   (`ForegroundReturned`); `Unknown` (no interactive desktop, query
+///   failure) never fabricates a trip;
+/// - staleness: a snapshot older than the contract's 2 s apply-freshness
+///   window is the stale-input trip (`FocusStale` with the real age).
+///
+/// Session lock has no adapter in this build and is therefore not fed
+/// (recorded gap; the `SessionLocked` observation stays available).
+fn feed_safety_observations(
+    shared: &Shared,
+    loop_: &mut crate::policy_loop::PolicyLoop<
+        ramshaper_journal::JournalStore,
+        ramshaper_windows::priority::WindowsPriorityActuator,
+    >,
+    now_unix_ms: u64,
+) {
+    use ramshaper_core::eligibility::FocusObservation;
+    use ramshaper_core::guardrails::SafetyObservation;
+
+    let Some(parent) = loop_.outstanding_applied_identity() else {
+        // Nothing outstanding: only snapshot staleness could matter, and
+        // with no action to protect it is not a trip — stay cheap.
+        return;
+    };
+
+    // Children of the consented target (one scan only while an action is
+    // outstanding).
+    let scan = ramshaper_windows::processes::scan_processes();
+    if scan.scan_failure.is_none() {
+        for row in scan
+            .processes
+            .iter()
+            .filter(|r| r.parent_pid == parent.pid && r.identity.pid != parent.pid)
+        {
+            loop_.observe_safety(
+                &SafetyObservation::ChildSpawned {
+                    parent,
+                    child: row.identity,
+                    child_image: row.name.clone(),
+                },
+                now_unix_ms,
+            );
+            // The first trip restores the record; further rows find no
+            // outstanding action and are refused by the loop.
+        }
+    }
+
+    // Foreground return: only a positive observation trips.
+    if let FocusObservation::Observed {
+        target_foreground: true,
+        ..
+    } = ramshaper_windows::eligibility::observe_focus(parent.pid)
+    {
+        loop_.observe_safety(&SafetyObservation::ForegroundReturned, now_unix_ms);
+    }
+
+    // Stale safety input: the collector's evidence is older than the
+    // contract's apply-freshness window.
+    let age_ms = ramshaper_core::SystemClock.monotonic_ms().saturating_sub(
+        shared
+            .latest
+            .lock()
+            .map(|l| l.as_ref().map_or(0, |s| s.monotonic_ms))
+            .unwrap_or(0),
+    );
+    if age_ms > ramshaper_core::eligibility::APPLY_INPUT_FRESHNESS_MS {
+        loop_.observe_safety(&SafetyObservation::FocusStale { age_ms }, now_unix_ms);
+    }
 }
 
 /// Accept clients until stop. Connection workers are detached: each ends on

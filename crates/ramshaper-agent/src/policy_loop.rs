@@ -17,10 +17,10 @@
 use std::collections::HashMap;
 
 use ramshaper_core::coordinator::{
-    ActionJournal, ActuatorError, ConfirmOutcome, Coordinator, JournalSnapshot, PriorityActuator,
-    RestoreEngine, RestoreOutcome,
+    ActionJournal, ActuatorError, Coordinator, JournalSnapshot, PriorityActuator, RestoreEngine,
+    RestoreOutcome,
 };
-use ramshaper_core::guardrails::{evaluate, Decision, SafetyObservation};
+use ramshaper_core::guardrails::{evaluate, CompatibilityFinding, Decision, SafetyObservation};
 use ramshaper_core::identity::ProcessIdentity;
 use ramshaper_core::journal::{reconcile, ActionState, Event, Observed, ReconcileDecision};
 
@@ -75,20 +75,24 @@ pub struct PolicyLoop<J: ActionJournal, A: PriorityActuator> {
     journal: J,
     actuator: A,
     engine: RestoreEngine,
+    #[allow(dead_code)] // mid-refactor: confirm moved to the gate; loop no longer reads it
     coordinator: Coordinator,
     stats: PolicyLoopStats,
     /// Trigger currently awaiting verification (one action at a time).
     pending: Option<PendingTrigger>,
-    /// In-memory TTL bookkeeping: action id → deadline (mirrors the
-    /// journal's Applied records; refreshed from snapshots).
-    deadlines: HashMap<String, u64>,
     /// Due retries the engine scheduled (`RetryScheduled`): action id →
     /// (trigger to restate, when the attempt is allowed). A due time is
     /// inclusive (the schedule says when the attempt is allowed); entries
     /// clear on terminal outcomes, `ManualRetry` and `NeedsAttention`
-    /// (those records wait for an external/manual trigger, never a busy
-    /// tick loop).
+    /// (those records wait for an external trigger, never a busy
+    /// tick loop). TTL expiry has no in-memory mirror: the journal's
+    /// `applied_deadline_unix_ms` is the single source of truth, so
+    /// applies made through the gate need no bridge into the loop.
     retry_dues: HashMap<String, (ramshaper_core::coordinator::RestoreTrigger, u64)>,
+    /// Compatibility findings recorded by child-spawned trips (AT-14:
+    /// "incompatibility is recorded") — evidence for the RS-024 Stage B
+    /// allowlist, never a verdict about the app.
+    findings: Vec<CompatibilityFinding>,
 }
 
 impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
@@ -102,8 +106,8 @@ impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
             coordinator: Coordinator::new(ramshaper_core::policy::PolicyRules::default_experiment()),
             stats: PolicyLoopStats::default(),
             pending: None,
-            deadlines: HashMap::new(),
             retry_dues: HashMap::new(),
+            findings: Vec::new(),
         }
     }
 
@@ -111,6 +115,23 @@ impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
     #[must_use]
     pub fn stats(&self) -> &PolicyLoopStats {
         &self.stats
+    }
+
+    /// Compatibility findings recorded by child-spawned trips (AT-14):
+    /// evidence for the RS-024 Stage B allowlist, in record order.
+    #[must_use]
+    pub fn findings(&self) -> &[CompatibilityFinding] {
+        &self.findings
+    }
+
+    /// The outstanding Applied record's exact identity, when one exists —
+    /// the safety-feed seam: the agent observes children/focus of exactly
+    /// this target and feeds the observations back through
+    /// [`PolicyLoop::observe_safety`].
+    #[must_use]
+    pub fn outstanding_applied_identity(&self) -> Option<ProcessIdentity> {
+        let action_id = self.outstanding_applied_action()?;
+        self.identity_of(&action_id)
     }
 
     /// Whether the loop acts at all.
@@ -254,7 +275,7 @@ impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
             return false;
         }
         let decision = evaluate(observation, now_unix_ms);
-        let Decision::Trip { trigger, .. } = decision else {
+        let Decision::Trip { trigger, finding } = decision else {
             return false;
         };
         // Map the trigger to the outstanding Applied record (the one-action
@@ -262,6 +283,18 @@ impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
         let Some(action_id) = self.outstanding_applied_action() else {
             return false;
         };
+        // AT-14: "incompatibility is recorded" — the finding is evidence
+        // for the Stage B allowlist; the parent label comes from the
+        // record's own intent (evaluate leaves it to the agent).
+        if let Some(mut finding) = finding {
+            if let Some(snapshot) = self.journal.record_snapshot(&action_id).ok().flatten() {
+                finding.parent_image = snapshot
+                    .intent
+                    .map(|intent| intent.target_name)
+                    .unwrap_or_default();
+            }
+            self.findings.push(finding);
+        }
         let Some(identity) = self.identity_of(&action_id) else {
             return false;
         };
@@ -307,14 +340,31 @@ impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
         if !self.config.enabled {
             return;
         }
-        // TTL expiry: every Applied record past its deadline restores.
-        let expired: Vec<(String, ProcessIdentity)> = self
-            .deadlines
-            .iter()
-            .filter(|(_, deadline)| **deadline < now_unix_ms)
-            .map(|(id, _)| (id.clone(), ()))
-            .filter_map(|(id, _)| self.identity_of(&id).map(|identity| (id, identity)))
-            .collect();
+        // TTL expiry: every Applied record past its deadline restores. The
+        // journal is the source of truth — applies made through the gate's
+        // own coordinator (the production path) are seen here without any
+        // bridge, exactly like startup recovery sees them.
+        let expired: Vec<(String, ProcessIdentity)> = match self.journal.unresolved_ids() {
+            Ok(ids) => ids
+                .into_iter()
+                .filter_map(|action_id| {
+                    let snapshot = self.journal.record_snapshot(&action_id).ok().flatten()?;
+                    if snapshot.state != ActionState::Applied {
+                        return None;
+                    }
+                    let deadline = snapshot.applied_deadline_unix_ms?;
+                    if deadline >= now_unix_ms {
+                        return None;
+                    }
+                    let intent = snapshot.intent?;
+                    Some((
+                        action_id,
+                        ProcessIdentity::new(intent.pid, intent.creation_filetime),
+                    ))
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        };
         for (action_id, identity) in expired {
             self.begin_verification(&action_id, now_unix_ms);
             let outcome = self.engine.restore_once(
@@ -372,13 +422,6 @@ impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
                 pending.miss_counted = true;
             }
         }
-    }
-
-    /// Refresh the TTL bookkeeping after a confirm (the agent calls this
-    /// when the coordinator applies an action).
-    pub fn note_applied(&mut self, action_id: &str, deadline_unix_ms: u64) {
-        self.deadlines
-            .insert(action_id.to_string(), deadline_unix_ms);
     }
 
     fn outstanding_applied_action(&self) -> Option<String> {
@@ -446,39 +489,9 @@ impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
                     self.stats.missed_deadlines += 1;
                 }
             }
-            self.deadlines.remove(action_id);
+            self.retry_dues.remove(action_id);
         }
         terminal
-    }
-}
-
-/// Outcome helper used by `reconcile_unapplied`'s match arms.
-impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
-    /// Whether the coordinator confirms through this loop's journal and
-    /// actuator (the agent calls this after a preview; kept here so the
-    /// stats/deadline bookkeeping stays consistent with applies).
-    pub fn confirm(
-        &mut self,
-        identity: &ProcessIdentity,
-        action_id: &str,
-        now_unix_ms: u64,
-    ) -> ConfirmOutcome {
-        let outcome = self.coordinator.confirm(
-            &self.journal,
-            &mut self.actuator,
-            identity,
-            action_id,
-            now_unix_ms,
-        );
-        if let ConfirmOutcome::Applied { deadline_unix_ms } = &outcome {
-            self.note_applied(action_id, *deadline_unix_ms);
-        }
-        outcome
-    }
-
-    /// Expose the coordinator for previews (the loop owns the slot).
-    pub fn coordinator(&mut self) -> &mut Coordinator {
-        &mut self.coordinator
     }
 }
 
@@ -717,7 +730,8 @@ mod tests {
             journal,
             FakeActuator::new(0x4000),
         );
-        loop_.note_applied("act-4242", 500);
+        // No note_applied bridge: the deadline comes from the journal
+        // snapshot (the gate's applies are seen the same way).
         loop_.tick(501);
         assert_eq!(loop_.stats().restored, 1);
     }
@@ -743,5 +757,81 @@ mod tests {
         loop_.tick(7_000);
         assert_eq!(loop_.stats().restored, 1);
         assert_eq!(loop_.stats().missed_deadlines, 1, "a miss stays counted");
+    }
+
+    #[test]
+    fn child_spawned_trip_restores_and_records_the_finding() {
+        // AT-14: the parent restores and the incompatibility is recorded —
+        // the finding carries the child identity plus the parent label
+        // from the record's intent (evaluate leaves it to the agent).
+        let journal = FakeJournal::default();
+        journal.seed_applied(4242, 500_000);
+        let mut loop_ = PolicyLoop::new(
+            PolicyLoopConfig { enabled: true },
+            journal,
+            FakeActuator::new(0x4000),
+        );
+        let parent = ProcessIdentity::new(4242, 133_000_000_000_000_000 + 4242);
+        let child = ProcessIdentity::new(5151, 133_000_000_000_000_000 + 5151);
+        let tripped = loop_.observe_safety(
+            &SafetyObservation::ChildSpawned {
+                parent,
+                child,
+                child_image: "helper.exe".to_string(),
+            },
+            1_000,
+        );
+        assert!(tripped);
+        assert_eq!(loop_.stats().restored, 1);
+        let findings = loop_.findings();
+        assert_eq!(findings.len(), 1, "exactly one finding: {findings:?}");
+        assert_eq!(findings[0].parent_image, "app.exe", "the record's label");
+        assert_eq!(findings[0].child_image, "helper.exe");
+        assert_eq!(findings[0].child_pid, 5151);
+        assert_eq!(
+            findings[0].child_creation_filetime,
+            child.creation_filetime_100ns
+        );
+        assert_eq!(findings[0].recorded_at_unix_ms, 1_000);
+        // The no-descendant-write rule holds by construction: the loop's
+        // vocabulary has no path that writes to the child.
+    }
+
+    #[test]
+    fn focus_stale_beyond_the_freshness_window_trips() {
+        // RS-018's stale-input trip: focus evidence older than the apply
+        // freshness window (2 s) invalidates the experiment.
+        let journal = FakeJournal::default();
+        journal.seed_applied(4242, 500_000);
+        let mut loop_ = PolicyLoop::new(
+            PolicyLoopConfig { enabled: true },
+            journal,
+            FakeActuator::new(0x4000),
+        );
+        let tripped = loop_.observe_safety(&SafetyObservation::FocusStale { age_ms: 3_000 }, 1_000);
+        assert!(tripped);
+        assert_eq!(loop_.stats().restored, 1);
+        assert!(
+            loop_.findings().is_empty(),
+            "stale focus is a safety trip, not a compatibility finding"
+        );
+    }
+
+    #[test]
+    fn outstanding_applied_identity_serves_the_safety_feed() {
+        let journal = FakeJournal::default();
+        journal.seed_applied(4242, 500_000);
+        let mut loop_ = PolicyLoop::new(
+            PolicyLoopConfig { enabled: true },
+            journal,
+            FakeActuator::new(0x4000),
+        );
+        assert_eq!(
+            loop_.outstanding_applied_identity(),
+            Some(ProcessIdentity::new(4242, 133_000_000_000_000_000 + 4242))
+        );
+        // After a terminal restore there is nothing outstanding to feed.
+        loop_.observe_safety(&SafetyObservation::ForegroundReturned, 1_000);
+        assert_eq!(loop_.outstanding_applied_identity(), None);
     }
 }

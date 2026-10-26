@@ -26,16 +26,21 @@ fn spawn_quiet_child(seconds: u32) -> Child {
         .expect("spawn ping child")
 }
 
-/// A gate wired like the tested matrix would: the child's image name is on
-/// the allowlist and classification is verified noncritical.
-fn test_gate() -> PolicyGate {
+/// A gate wired like the tested matrix would: the named images are on the
+/// allowlist and classification is verified noncritical.
+fn test_gate_allowing(names: &[&str]) -> PolicyGate {
     let store = JournalStore::open_in_memory().expect("in-memory journal");
     PolicyGate::open_with_classification(
         store,
-        Allowlist::new(ELIGIBILITY_RULES_VERSION, &["PING.EXE"]),
+        Allowlist::new(ELIGIBILITY_RULES_VERSION, names),
         Vec::new(),
         Box::new(|_pid, _image| SafetyClassification::VerifiedNonCritical),
     )
+}
+
+/// The standard gate: the `ping` fixture is the tested workload.
+fn test_gate() -> PolicyGate {
+    test_gate_allowing(&["PING.EXE"])
 }
 
 const NOW: u64 = 1_800_000_000_000;
@@ -416,4 +421,263 @@ fn stopping_the_agent_runs_the_clean_exit_trigger() {
 
     let _ = child.kill();
     let _ = child.wait();
+}
+
+/// Preview + confirm through the gate with the injected seam; panics with
+/// the wire explanation on any refusal. Anchored on the real clock so the
+/// live ticker (which ticks on the real clock) sees the same deadlines.
+fn confirm_applied(
+    gate: &PolicyGate,
+    action_id: &str,
+    pid: u32,
+    identity: &ramshaper_core::identity::ProcessIdentity,
+    image: &str,
+    ttl_ms: Option<u64>,
+) {
+    use ramshaper_core::clock::WallClock as _;
+    let now = ramshaper_core::SystemClock.unix_epoch_ms();
+    let preview = gate.preview(
+        &PreviewActionRequest {
+            action_id: action_id.to_string(),
+            pid,
+            creation_filetime: identity.creation_filetime_100ns.to_string(),
+            image_name: image.to_string(),
+            ttl_ms,
+        },
+        PressureLevel::Elevated,
+        now,
+    );
+    match preview {
+        ramshaper_agent::policy::ResponseData::Ok(value) => {
+            assert_eq!(value["verdict"], "offered", "got {value}");
+        }
+        ramshaper_agent::policy::ResponseData::Err { code, message, .. } => {
+            panic!("preview denied: {code:?} {message}")
+        }
+    }
+    let confirm = gate.confirm(
+        &ConfirmActionRequest {
+            action_id: action_id.to_string(),
+        },
+        now + 1_000,
+    );
+    match confirm {
+        ramshaper_agent::policy::ResponseData::Ok(value) => {
+            assert_eq!(value["outcome"], "applied", "got {value}");
+        }
+        ramshaper_agent::policy::ResponseData::Err { code, message, .. } => {
+            panic!("confirm failed: {code:?} {message}");
+        }
+    }
+}
+
+#[test]
+fn ttl_expiry_restores_through_the_live_ticker() {
+    // Contract 14 §6: TTL expiry is a restore trigger. Before this slice
+    // nothing in the shipped agent ever called the loop's tick — an action
+    // stayed applied forever. With the 1 s ticker wired in serve(), a
+    // 10 s TTL must restore by itself, with no manual call.
+    use ramshaper_agent::dispatch::ConfigSummary;
+    use ramshaper_agent::server::serve;
+    use ramshaper_core::coordinator::ActionJournal as _;
+    use ramshaper_core::journal::ActionState;
+    use ramshaper_core::watch::WatchConfig;
+    use ramshaper_windows::event::ManualResetEvent;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    let mut child = spawn_quiet_child(25);
+    let pid = child.id();
+    let identity = resolve_identity(pid).expect("fresh child identity");
+    let gate = Arc::new(test_gate());
+    gate.enable();
+
+    let stop = Arc::new(ManualResetEvent::new().expect("stop event"));
+    let handle = serve(
+        Arc::clone(&stop),
+        format!(r"\\.\pipe\ramshaper-test-ttl-{}", std::process::id()),
+        WatchConfig::new(500).expect("cadence"),
+        ConfigSummary {
+            mode: "observe_only".to_string(),
+            profile: "balanced".to_string(),
+            exclusions: Vec::new(),
+        },
+        Some(Arc::clone(&gate)),
+    )
+    .expect("agent serves");
+    std::thread::sleep(Duration::from_millis(200));
+
+    confirm_applied(&gate, "ttl-1", pid, &identity, "ping.exe", Some(10_000));
+    assert_eq!(
+        eligibility::observe_priority_class(pid),
+        ramshaper_core::eligibility::PriorityClassObservation::Other {
+            detail: "BELOW_NORMAL_PRIORITY_CLASS".to_string(),
+        },
+        "the child must be at Below Normal right after the apply"
+    );
+
+    // No manual restore: the ticker owns the expiry. 10 s TTL + tick
+    // cadence; poll the journal for the terminal state.
+    let deadline = Instant::now() + Duration::from_secs(18);
+    loop {
+        let state = gate
+            .journal_clone()
+            .record_snapshot("ttl-1")
+            .expect("journal readable")
+            .map(|snapshot| snapshot.state);
+        if state == Some(ActionState::Restored) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the live ticker never restored the expired action (state {state:?})"
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    assert_eq!(
+        eligibility::observe_priority_class(pid),
+        ramshaper_core::eligibility::PriorityClassObservation::Normal,
+        "the expired action must be back at Normal"
+    );
+    handle.stop();
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
+fn child_spawned_after_apply_is_inherited_then_trips_the_restore() {
+    // The AT-14 live probe, now that the ticker feeds child observations:
+    // a consented parent (no children at apply) spawns a ping child ~3 s
+    // later. The child must INHERIT Below Normal (the compatibility risk
+    // the Stage B allowlist exists to test), and the ticker must trip the
+    // child-spawned guardrail and restore the parent.
+    use ramshaper_agent::dispatch::ConfigSummary;
+    use ramshaper_agent::server::serve;
+    use ramshaper_core::coordinator::ActionJournal as _;
+    use ramshaper_core::journal::ActionState;
+    use ramshaper_core::watch::WatchConfig;
+    use ramshaper_windows::event::ManualResetEvent;
+    use ramshaper_windows::processes;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    let mut parent = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            // UseShellExecute=$false forces a direct CreateProcess from
+            // powershell itself: Start-Process's default ShellExecute path
+            // can launch through the shell broker, and then Toolhelp does
+            // not report powershell as the child's parent (observed live).
+            "Start-Sleep -Seconds 3; $psi = New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName = 'ping.exe'; $psi.Arguments = '-n 10 127.0.0.1'; $psi.UseShellExecute = $false; [System.Diagnostics.Process]::Start($psi) | Out-Null; Start-Sleep -Seconds 9",
+        ])
+        .spawn()
+        .expect("spawn powershell parent");
+    let pid = parent.id();
+    let identity = resolve_identity(pid).expect("fresh parent identity");
+    let gate = Arc::new(test_gate_allowing(&["POWERSHELL.EXE"]));
+    gate.enable();
+
+    let stop = Arc::new(ManualResetEvent::new().expect("stop event"));
+    let handle = serve(
+        Arc::clone(&stop),
+        format!(r"\\.\pipe\ramshaper-test-at14-{}", std::process::id()),
+        WatchConfig::new(500).expect("cadence"),
+        ConfigSummary {
+            mode: "observe_only".to_string(),
+            profile: "balanced".to_string(),
+            exclusions: Vec::new(),
+        },
+        Some(Arc::clone(&gate)),
+    )
+    .expect("agent serves");
+    std::thread::sleep(Duration::from_millis(300));
+
+    confirm_applied(&gate, "at14-1", pid, &identity, "powershell.exe", None);
+    assert_eq!(
+        eligibility::observe_priority_class(pid),
+        ramshaper_core::eligibility::PriorityClassObservation::Other {
+            detail: "BELOW_NORMAL_PRIORITY_CLASS".to_string(),
+        },
+        "the parent must be at Below Normal after the apply"
+    );
+
+    // Wait for the child to appear under the consented parent. The parent
+    // spawns it 3 s after ITS start; a cold PowerShell start on a loaded
+    // machine can push that well past a tight window, so wait 15 s and
+    // diagnose on timeout.
+    let mut child_info = None;
+    let child_deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < child_deadline {
+        let scan = processes::scan_processes();
+        if scan.scan_failure.is_none() {
+            if let Some(row) = scan
+                .processes
+                .iter()
+                .find(|r| r.parent_pid == pid && r.identity.pid != pid)
+            {
+                child_info = Some((row.identity, row.name.clone()));
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    let (child_identity, child_name) = child_info.unwrap_or_else(|| {
+        let scan = processes::scan_processes();
+        panic!(
+            "the parent must spawn its ping child; parent {} alive={}; same-parent rows: {:?}",
+            pid,
+            resolve_identity(pid).is_ok(),
+            scan.processes
+                .iter()
+                .filter(|r| r.parent_pid == pid)
+                .map(|r| (r.identity.pid, r.name.clone()))
+                .collect::<Vec<_>>()
+        );
+    });
+    assert!(
+        child_name.eq_ignore_ascii_case("ping.exe"),
+        "the spawned child is the ping fixture, got {child_name}"
+    );
+
+    // THE INHERITANCE EVIDENCE: the child was created while the parent
+    // held the applied class — it must have inherited Below Normal (this
+    // is exactly what RS-024 Stage B must test before any app is
+    // allowlisted).
+    assert_eq!(
+        eligibility::observe_priority_class(child_identity.pid),
+        ramshaper_core::eligibility::PriorityClassObservation::Other {
+            detail: "BELOW_NORMAL_PRIORITY_CLASS".to_string(),
+        },
+        "the child must have inherited the applied class at creation"
+    );
+
+    // The ticker's child observation trips the guardrail: the parent
+    // restores (the descendant receives no write — it keeps its inherited
+    // class until it exits on its own).
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let state = gate
+            .journal_clone()
+            .record_snapshot("at14-1")
+            .expect("journal readable")
+            .map(|snapshot| snapshot.state);
+        if state == Some(ActionState::Restored) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the live ticker never tripped on the spawned child (state {state:?})"
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    assert_eq!(
+        eligibility::observe_priority_class(pid),
+        ramshaper_core::eligibility::PriorityClassObservation::Normal,
+        "the parent must be restored after the child-spawned trip"
+    );
+
+    handle.stop();
+    let _ = parent.kill();
+    let _ = parent.wait();
 }

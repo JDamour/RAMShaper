@@ -701,3 +701,38 @@ an honest consent act; RS-013's UI controls get a real, distinguishable
 counterpart (`Busy` "policy is disabled" vs `Unsupported` "no stage"); the
 remaining G3 evidence (child-inheritance probe, allowlist population)
 can now be produced on an enabled session.
+
+## ADR-039: The policy loop lives on a ticker; the journal is its only input — Accepted (implemented 2026-10-26; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+
+**Context:** the pure policy loop (ADR-034) was constructed transiently
+by `serve()` for startup reconciliation and then dropped — the shipped
+agent never ticked it, so half of contract 14 §6's restore triggers
+could not fire outside tests. Wiring it raised a design question: how
+does the loop learn what happened (applies, deadlines, children) when
+applies go through the gate's own coordinator?
+
+**Decisions:**
+- `serve()` keeps **one long-lived loop on a 1 s stop-event ticker**:
+  each pass feeds safety observations (stateless R-03 adapter reads of
+  the outstanding Applied target) and then ticks. Trigger latency is
+  bounded by the tick, inside the 2 s verification target, which stays
+  accounted.
+- **The journal is the loop's only source of truth for expiry**: TTL
+  expiry derives from `unresolved_ids` + `applied_deadline_unix_ms`, the
+  same path startup recovery uses. The in-memory deadline mirror +
+  `note_applied` bridge (which nothing in production called — applies
+  were invisible to it, found live by test) is removed; there is no
+  gate→loop bridge to forget.
+- The safety feed is **event-shaped and honest**: only a positive
+  foreground observation trips; a failed child scan is skipped, never
+  fabricated as "no children"; staleness uses the real snapshot age.
+  Child-spawned trips capture the `CompatibilityFinding` (AT-14) into a
+  findings sink instead of discarding it.
+
+**Consequences:** all contract §6 triggers except session lock (no
+adapter yet — recorded) now fire in the shipped agent; the AT-14
+inheritance probe is live-proven (child inherits the applied class; the
+trip restores the parent and writes nothing to the descendant); the
+Stage B allowlist work has a findings source. The loop remains
+restore-direction only: the ticker consumes observations, it cannot
+create actions.

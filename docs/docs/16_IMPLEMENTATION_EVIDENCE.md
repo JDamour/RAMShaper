@@ -2024,3 +2024,47 @@ applied per convention).
 **Not covered here:** the bench workload/analysis boundary (sibling's
 in-flight RS-024 Stage B slice — reviewed when it lands); RS-027
 packaging/provenance (release-gated).
+
+# Policy-loop ticker — live safety feed + AT-14 inheritance probe, 2026-10-26
+
+**Scope implemented:** the loop 0.3.28 shipped was constructed transiently
+for startup reconciliation and dropped — no `tick` or `observe_safety`
+ever ran in the shipped agent, so TTL expiry, the child-spawned /
+foreground-return / stale-input trips, due retries and missed-deadline
+accounting existed only in tests. This slice: `serve()` keeps the loop on
+a **1 s stop-event-driven ticker** whose feed observes the outstanding
+Applied target through the R-03 adapters — children of the applied target
+(an applied target had zero at apply, so any child row is a new
+descendant) become `ChildSpawned` with the child's exact identity for the
+AT-14 finding; only a positive foreground observation trips; a snapshot
+older than the 2 s freshness window is the `FocusStale` trip (session
+lock has no adapter and is not fed — recorded gap). The loop now also
+**captures the `CompatibilityFinding`** (child identity + image +
+timestamp, parent label from the record's intent) into a findings sink —
+0.3.28's ticker discarded it, breaking AT-14's "incompatibility is
+recorded".
+
+**Repair found live:** the loop's TTL expiry read an in-memory deadline
+map populated only by `note_applied` — a bridge nothing in production
+calls (the gate applies through its own coordinator), so **an applied
+action stayed applied forever**; the new
+`ttl_expiry_restores_through_the_live_ticker` test pinned it and the fix
+makes the journal the single source of truth (expiry derives from
+`unresolved_ids` + `applied_deadline_unix_ms`, exactly like startup
+recovery). The dead map, `note_applied` and the loop's unused
+`confirm`/`coordinator` wrappers are removed.
+
+**AT-14 live probe (twice-stable):** a consented `powershell.exe` parent
+is applied Below Normal; 3 s in it spawns a `ping` child; the test proves
+**the child inherited Below Normal at creation** (the exact
+compatibility risk RS-024 Stage B must test), then the ticker trips the
+child-spawned guardrail and **the parent restores to Normal** while the
+descendant receives no write. Fixture finding recorded: `Start-Process`
+defaults to ShellExecute and the child can be broker-launched with a
+different Toolhelp parent (observed: zero same-parent rows);
+`UseShellExecute = $false` forces direct CreateProcess parenting.
+
+**Gates (2026-10-26):** fmt clean; clippy `-D warnings` clean; agent
+crate **59 passed, 0 failed** (28 lib incl. the findings/identity/stale
+tests + 3 boundary + 15 ipc + 8 policy_ipc incl. both live ticker tests);
+workspace run in `docs/evidence/2026-10-26-policy-loop-ticker/`. ADR-039.
