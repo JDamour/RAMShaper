@@ -14,6 +14,7 @@
 #![deny(unsafe_code)]
 
 pub mod analysis;
+pub mod workload;
 
 use std::process::ExitCode;
 use std::time::Instant;
@@ -30,6 +31,8 @@ ramshaper-bench — RAMShaper measurement harnesses
 USAGE:
     ramshaper-bench observer-overhead [--iterations N] [--json] [--config P]
     ramshaper-bench analyze-ab --blocks <PATH> [--seed <SEED>] [--json]
+    ramshaper-bench workload-ab [--pilot-blocks N] [--events N] [--warmup N]
+                                [--task-iters N] [--seed <SEED>] [--json]
 
 observer-overhead measures per-collection latency of the read-only
 collector paths on this machine (global system snapshot; process inventory
@@ -40,6 +43,12 @@ nearest-rank p95, paired-by-block deltas, 10,000-resample bootstrap CI
 with the recorded seed, doc-08 outcome labels) over a JSON blocks file
 and prints the report. This is fixture/statistics machinery: it makes no
 claim about real workloads.
+
+workload-ab executes the synthetic CPU task-latency pilot (counterbalanced
+AB/BA blocks, warmup excluded by design, stop control; doc 08 §3) and
+feeds it straight into the analysis. The treatment today is observe-only
+(no policy injection — that lands with the owner-gated consent flow), so
+an honest pilot shows no benefit.
 
 observer-overhead is classified with its AT-21 hardware cohort from the
 optional TOML config's [cohort] declared value (4gib, 8gib, 16gib, or
@@ -56,6 +65,9 @@ fn main() -> ExitCode {
     let mut config_path: Option<std::path::PathBuf> = None;
     let mut blocks_path: Option<std::path::PathBuf> = None;
     let mut seed: Option<u64> = None;
+    let mut warmup: Option<usize> = None;
+    let mut task_iters: Option<u64> = None;
+    let mut pilot_blocks: Option<usize> = None;
 
     let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {
@@ -103,8 +115,59 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             },
+            "--events" => match args
+                .next()
+                .and_then(|v| v.to_string_lossy().parse::<usize>().ok())
+            {
+                Some(n) if (100..=100_000).contains(&n) => iterations = Some(n),
+                Some(n) => {
+                    eprintln!(
+                        "error: --events {n} is below the descriptive-p95 minimum of 100 (doc 08 §3)"
+                    );
+                    return ExitCode::from(2);
+                }
+                None => {
+                    eprintln!("error: --events requires a number");
+                    return ExitCode::from(2);
+                }
+            },
+            "--pilot-blocks" => {
+                match args
+                    .next()
+                    .and_then(|v| v.to_string_lossy().parse::<usize>().ok())
+                {
+                    Some(n) if (1..=10_000).contains(&n) => pilot_blocks = Some(n),
+                    _ => {
+                        eprintln!("error: --pilot-blocks requires a number in 1..=10000");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+            "--warmup" => match args
+                .next()
+                .and_then(|v| v.to_string_lossy().parse::<usize>().ok())
+            {
+                Some(n) => warmup = Some(n),
+                None => {
+                    eprintln!("error: --warmup requires a number");
+                    return ExitCode::from(2);
+                }
+            },
+            "--task-iters" => {
+                match args
+                    .next()
+                    .and_then(|v| v.to_string_lossy().parse::<u64>().ok())
+                {
+                    Some(n) if n > 0 => task_iters = Some(n),
+                    _ => {
+                        eprintln!("error: --task-iters requires a positive number");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
             "observer-overhead" if harness.is_none() => harness = Some("observer-overhead"),
             "analyze-ab" if harness.is_none() => harness = Some("analyze-ab"),
+            "workload-ab" if harness.is_none() => harness = Some("workload-ab"),
             other => {
                 eprintln!("error: unexpected argument '{other}'");
                 eprintln!("usage: ramshaper-bench <observer-overhead|analyze-ab> [--json] [...]");
@@ -120,6 +183,9 @@ fn main() -> ExitCode {
             config_path.as_ref(),
         ),
         Some("analyze-ab") => run_analyze_ab(blocks_path, seed, json),
+        Some("workload-ab") => {
+            run_workload_ab(pilot_blocks, iterations, warmup, task_iters, seed, json)
+        }
         _ => {
             eprintln!("error: missing harness name");
             eprintln!(
@@ -221,6 +287,97 @@ fn load_config(path: Option<&std::path::PathBuf>) -> Result<ramshaper_core::Core
             ramshaper_core::CoreConfig::parse(&text)
                 .map_err(|e| format!("invalid config {}: {e}", path.display()))
         }
+    }
+}
+
+/// The Stage B pilot: execute the counterbalanced synthetic workload and
+/// analyze it. The treatment is observe-only (no policy injection) until
+/// the owner-gated consent flow enables it.
+fn run_workload_ab(
+    blocks: Option<usize>,
+    events: Option<usize>,
+    warmup: Option<usize>,
+    task_iters: Option<u64>,
+    seed: Option<u64>,
+    json: bool,
+) -> ExitCode {
+    use workload::{into_analysis_blocks, run_ab_pilot, stop_control, WorkloadSpec};
+
+    let spec = WorkloadSpec {
+        events_per_run: events.unwrap_or(workload::DEFAULT_EVENTS_PER_RUN),
+        warmup_events: warmup.unwrap_or(workload::DEFAULT_WARMUP_EVENTS),
+        task_iters: task_iters.unwrap_or_else(|| WorkloadSpec::default().task_iters),
+        seed: seed.unwrap_or_else(|| WorkloadSpec::default().seed),
+    };
+    if let Err(error) = spec.validate() {
+        eprintln!("error: {error}");
+        return ExitCode::from(2);
+    }
+    let blocks = blocks.unwrap_or(10); // doc 08 §3 pilot minimum
+    let stop = stop_control();
+    let noop = || {};
+    eprintln!(
+        "workload pilot: {blocks} AB/BA blocks x {} events (warmup {}, task iters {}, seed {}) - observe-only treatment",
+        spec.events_per_run, spec.warmup_events, spec.task_iters, spec.seed
+    );
+    let started = Instant::now();
+    let executed = run_ab_pilot(&spec, blocks, &noop, &stop);
+    let complete = executed
+        .iter()
+        .filter(|block| {
+            block.baseline.completion == workload::Completion::Complete
+                && block.treatment.completion == workload::Completion::Complete
+        })
+        .count();
+    eprintln!(
+        "executed {} blocks ({complete} complete) in {:.1} s",
+        executed.len(),
+        started.elapsed().as_secs_f64()
+    );
+    let analysis_blocks = into_analysis_blocks(&executed);
+    let config = analysis::BootstrapConfig {
+        seed: spec.seed,
+        ..analysis::BootstrapConfig::default()
+    };
+    let report = analysis::analyze(
+        &analysis_blocks,
+        &config,
+        &analysis::Guardrails::default(),
+        &analysis::SafetyReport {
+            safety_failure: false,
+            reasons: Vec::new(),
+        },
+    );
+    if json {
+        match serde_json::to_string_pretty(&report) {
+            Ok(out) => {
+                println!("{out}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("error: serialization failed: {error}");
+                ExitCode::from(1)
+            }
+        }
+    } else {
+        println!(
+            "workload A/B ({} pairable blocks, resamples {}, seed {})",
+            report.summary.pairs_used, report.summary.resamples, report.summary.seed
+        );
+        println!(
+            "  median improvement {:?} %, CI {:?} (exploratory: {})",
+            report.summary.median_improvement_pct,
+            report.summary.ci95_improvement_pct,
+            report.summary.exploratory
+        );
+        println!("  label: {:?}", report.label);
+        for reason in &report.reasons {
+            println!("  - {reason}");
+        }
+        println!(
+            "  note: observe-only treatment; this pilot exercises the machinery and claims nothing"
+        );
+        ExitCode::SUCCESS
     }
 }
 

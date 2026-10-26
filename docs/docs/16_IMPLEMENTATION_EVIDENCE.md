@@ -1827,3 +1827,42 @@ number independently derivable by hand.
 synthetic workload with stop control — needs the enabled actuator,
 owner-gated); safety/completeness accounting from a real runner; RS-024
 Stage C (wizard, export) at G5.
+
+---
+
+# RS-024 Stage B runner — synthetic workload pilot, 2026-10-26
+
+**Scope implemented:** `ramshaper-bench::workload` (+6 tests) and the
+`workload-ab` CLI: a bounded, allocation-free CPU task-latency workload
+(≥ 100 measured events per run enforced, warmup executed then excluded by
+design, stop control with `StoppedEarly { executed }` completion records),
+a counterbalanced AB/BA block driver (seeded order, executed order
+recorded), and conversion into the AT-20 analysis input (complete pairs
+only; stopped series retained in the record). The treatment is an injected
+closure — observe-only today; the owner-gated policy action lands at that
+seam without harness changes. **The pilot claims nothing**: with a no-op
+treatment the honest result is noise.
+
+**Live evidence** (`docs/evidence/2026-10-26-rs024b-workload-pilot/`):
+`workload-ab --pilot-blocks 10 --events 100 --seed 4242` — 10 AB/BA blocks,
+all complete, 2.2 s wall; median −1.6%, CI [−15.7, +33.3]; label
+`regression` via the 2% completion guardrail (worst-case noise "slowdown"
+15.7% > 2%) with the observe-only note printed beside it.
+
+**Tests:** schedule completeness (warmup excluded, 100 measured events,
+all positive), pre-fired and mid-run stop control (nothing executes after
+a pre-fired stop; a mid-run stop records the count), treatment closure
+invoked exactly once per measured task (never for warmup), counterbalanced
+orders both present with per-block ids intact, and incomplete pairs
+excluded from analysis while retained in the record.
+
+**Workspace gates:** bench fmt/clippy `-D warnings`/tests 18 passed /
+0 failed; workspace `cargo test` **358 passed, 0 failed** (the concurrent
+session's in-flight ui edit has a formatting-only diff at write time; the
+agent crate's in-flight dispatch work is theirs).
+
+**Not in this slice (recorded, not hidden):** the real treatment (owner
+gate), per doc 08 the *pressure*-style workload variant (disposable
+environment only), and the preregistration document that freezes the
+thresholds before a real trial — the labels' thresholds are code constants
+here, and a real run must declare them externally first.

@@ -1,0 +1,7 @@
+workload pilot: 10 AB/BA blocks x 100 events (warmup 10, task iters 200000, seed 4242) - observe-only treatment
+executed 10 blocks (10 complete) in 2.1 s
+workload A/B (10 pairable blocks, resamples 10000, seed 4242)
+  median improvement Some(-3.090242080874895) %, CI Some((-32.06660537337828, 9.705803928539682)) (exploratory: false)
+  label: Regression
+  - completion guardrail violated: worst-case improvement -32.07% implies a slowdown beyond the bound
+  note: observe-only treatment; this pilot exercises the machinery and claims nothing

@@ -1,0 +1,1 @@
+Observe-only pilot (synthetic CPU task workload; real timings, no policy). The -1.6% median and wide CI are machine noise; the guardrail label demonstrates the machinery flags noise honestly. The treatment injection point (run_workload's treatment closure) is where the owner-gated policy action lands.

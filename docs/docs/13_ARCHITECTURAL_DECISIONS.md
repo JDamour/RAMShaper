@@ -636,3 +636,37 @@ labelled before any real comparison runs (which stays owner-gated).
 tests against hand-computed values, plus a live CLI run); the A/B runner
 that produces real trials remains owner-gated, and this module will simply
 consume its output.
+
+## ADR-036: Stage B pilot runner — counterbalanced AB/BA over a bounded CPU workload — Accepted (implemented 2026-10-26; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+
+**Context:** RS-024 Stage B's runner half: the primary endpoint needs a
+data source whose schedule, pairing and stop behavior follow doc 08 §3 —
+built now, so the owner-gated actuator plugs into a finished harness.
+
+**Decisions:**
+- `ramshaper-bench::workload` measures **per-task latency of a bounded,
+  allocation-free CPU chunk** — never memory pressure on a live workspace
+  (doc 08 restricts synthetic *pressure* workloads to disposable
+  environments; task-scheduling latency needs none).
+- The schedule is **fixed and validated**: ≥ 100 measured events per run
+  (the descriptive-p95 minimum; the CLI refuses fewer), a warmup executed
+  then **excluded by design**, and identical event schedules for both
+  arms of a block.
+- **Counterbalanced AB/BA block order** from the recorded seed
+  (deterministic), with the executed order kept in the record.
+- **Stop control** (atomic flag, testable from the treatment injection
+  point): a stopped run records `StoppedEarly { executed }` and its
+  partial series is retained for the report but **excluded from pairing**
+  — an incomplete capture duration is a completion record, not a
+  comparable sample.
+- The **treatment is an injected closure** run before each measured task.
+  Today's only production treatment is the no-op (observe-only): an honest
+  pilot shows noise, which the analysis labels through the guardrails. The
+  policy injection lands at this exact seam when the owner enables the
+  consent flow — no harness changes.
+
+**Consequences:** the Stage B machinery is complete end to end
+(`workload-ab` → `analysis`); the label on an observe-only pilot is
+deliberately conservative (noise trips the guardrails and reads
+`regression`), which is the honest output for "no treatment, wide noise
+band" — the pilot's own note says it claims nothing.
