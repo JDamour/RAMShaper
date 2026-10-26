@@ -31,6 +31,7 @@ pub mod monitor;
 pub mod osinfo;
 pub mod perfinfo;
 pub mod pipe;
+pub mod priority;
 pub mod processes;
 pub mod token;
 pub mod window;

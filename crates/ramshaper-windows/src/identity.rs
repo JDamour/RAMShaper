@@ -47,7 +47,7 @@ fn filetime_to_u64(ft: &FILETIME) -> u64 {
 }
 
 /// Read the creation FILETIME through an open handle.
-fn creation_filetime(handle: &OwnedHandle) -> Result<u64, QueryFailure> {
+pub(crate) fn creation_filetime(handle: &OwnedHandle) -> Result<u64, QueryFailure> {
     let mut creation = FILETIME::default();
     let mut exit = FILETIME::default();
     let mut kernel = FILETIME::default();

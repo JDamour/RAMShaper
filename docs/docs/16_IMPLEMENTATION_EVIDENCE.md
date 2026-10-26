@@ -1445,3 +1445,58 @@ stale-input trip (RS-018), agent/IPC wiring (the coordinator stamps no
 agent-instance/consent fields — the agent fills them), and the eligibility
 "no outstanding action" count is fed as 0 while the single slot models the
 cap (multi-action accounting arrives with RS-018).
+
+---
+
+# RS-016 — real priority actuator (Windows half of the coordinator), 2026-10-26
+
+**Scope implemented:** the real `PriorityActuator` behind the
+disabled-actuation gate — new `ramshaper-windows::priority`
+(`WindowsPriorityActuator`), implementing `ramshaper-core::coordinator`'s
+trait (the pure preview/confirm coordinator and the SQLite store's
+`ActionJournal` impl are the parallel session's in-flight slice; this is
+the OS write half it composes with).
+
+**Safety properties (contract 14 §1/§6), each pinned by a live test:**
+
+- **One validated handle per write**: `OpenProcess(PROCESS_SET_INFORMATION |
+  PROCESS_QUERY_LIMITED_INFORMATION)` — the write right plus exactly the
+  query right the verification reads need; no inheritance.
+- **Identity validated through the write handle** before any effect: the
+  creation FILETIME is read through the same handle and compared to the
+  consented identity. Live test: a wrong creation marker on a spawned child
+  is refused with `IdentityMismatch` and an independent adapter read
+  confirms the class is untouched; a PID reuse can therefore never inherit
+  the consented write.
+- **Every write is read back through the same handle**; the returned value
+  is what the coordinator compares to the desired value.
+- **A failed `SetPriorityClass` is never assumed effect-free**: the value
+  is read back, and a read-back equal to the desired value is the honest
+  `UnknownOutcome` (write may have landed). A disagreeing read-back is the
+  clean `OsFailure{code, function}`.
+- **Unresolvable PIDs refuse without effect** (the documented post-exit
+  state; same top-of-address-space fixture as the R-03 adapters).
+
+**Live result** (evidence in
+[../evidence/2026-10-26-rs016-priority-actuator/live-actuator-tests.txt](../evidence/2026-10-26-rs016-priority-actuator/live-actuator-tests.txt)):
+the only live write target is a test-spawned `ping` child — Normal →
+Below Normal (read back `BELOW_NORMAL_PRIORITY_CLASS`, confirmed by an
+independent `observe_priority_class` adapter read) → restored to Normal
+through the same verified path, all inside the test. Workspace gates at
+record time (both sessions' work integrated): fmt clean, clippy `-D
+warnings` clean, **297 passed / 0 failed**.
+
+**Not in this slice:** agent IPC wiring (`PreviewAction`/`ConfirmAction`
+commands) and the startup recovery loop — the actuation stays disabled at
+the agent boundary until the RS-017 recovery tests pass (contract 14 §7);
+restore-on-trigger flow (RS-017); the coordinator records
+`original: None` at prepare with read-side pinning still to be wired.
+
+**Collision note (2026-10-26):** while building this slice I wrote a
+duplicate pure coordinator (`action.rs`) and a duplicate
+`ActionJournal for JournalStore` impl; the parallel session's
+`core::coordinator.rs` and its store impl (integrated test in
+`ramshaper-journal/tests/store.rs`) are canonical — both duplicates were
+deleted unmerged before any commit. Pre-flight `git log`/CHANGELOG checks
+had shown RS-016 unclaimed ~30 min earlier; the claim window is that short
+with three live sessions.

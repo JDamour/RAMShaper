@@ -1,0 +1,31 @@
+# RS-016 real priority actuator — live test run (2026-10-26)
+
+Host: MINGW64_NT-10.0-26300 x86_64, Microsoft Windows [Version 10.0.26300.9711]
+User context: standard user; the only live write target is a spawned ping child (Normal -> Below Normal -> Normal), restored inside the test
+Command: cargo test -p ramshaper-windows priority -- --nocapture --test-threads=1
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.31s
+     Running unittests src\lib.rs (target\debug\deps\ramshaper_windows-d82341b6eac6c48c.exe)
+
+running 5 tests
+test eligibility::tests::priority_class_of_fresh_child_is_normal ... ok
+test eligibility::tests::priority_class_of_unresolvable_pid_is_unknown ... unresolvable-PID class read unknown: target process exited or PID not found (Win32 code 87)
+ok
+test priority::tests::mismatched_creation_identity_is_refused_without_effect ... ok
+test priority::tests::unresolvable_pid_is_refused_without_effect ... ok
+test priority::tests::write_on_spawned_child_normal_to_below_normal_and_restored ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.05s
+
+     Running tests\integration.rs (target\debug\deps\integration-0e7a92cc3ffc9f3d.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+     Running tests\pipe_probe.rs (target\debug\deps\pipe_probe-e68924df8b12289e.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
