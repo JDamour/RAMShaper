@@ -1397,3 +1397,51 @@ low-memory signal. This record is factual only: the 24-hour completion
 criterion (C3) was not met on this rig, and the relaunch-vs-fold decision
 stays with the owner as previously recorded. No verdict was recorded and
 no process was killed.
+
+---
+
+# RS-016 — pure preview/confirm coordinator, 2026-10-26
+
+**Scope implemented:** the 0.2 action lifecycle as a pure coordinator
+(`ramshaper-core::coordinator`) over two traits it defines — `ActionJournal`
+(implemented by the SQLite store in `ramshaper-journal`) and
+`PriorityActuator` (fake in tests; the real Windows implementation remains
+**disabled and unwired** per the roadmap's actuation gate). Nothing here
+can write a real process setting.
+
+**Contract behavior pinned by tests (+10: 9 coordinator units + 1
+end-to-end over the real SQLite store):**
+
+- Previews are offered only when the journal is available, the slot is
+  free, the TTL is inside 10–300 s (default 120 s), pressure is fresh
+  `Elevated`, and the RS-015 gate fully passes — deny codes surface
+  verbatim (`excluded_by_user` verified); otherwise `PressureNotElevated` /
+  `Denied(report)` / `TtlOutOfRange` / `JournalUnavailable` /
+  `ActionOutstanding`.
+- The 30 s preview validity is inclusive: confirm at exactly +30 000 ms
+  applies; +30 001 ms expires (matches ADR-029's boundary convention).
+- Confirm orders durability before effect: the fake actuator asserts the
+  journal already holds the `Prepared` record at write time.
+- Idempotent replay: a second confirm of an applied action returns
+  `Replayed { deadline }` with the actuator call count unchanged — and the
+  replay check precedes the pending-preview gate, so it works after the
+  slot has freed.
+- Failure classification: clean OS failure → `Failed` (unpinned);
+  unknown outcome and read-back mismatch → `Uncertain` (pinned, recovery
+  retained for startup reconciliation); identity mismatch → `TargetGone`
+  with zero writes; storage faults → `StorageBlocked` and no applies.
+- End-to-end over `JournalStore` on a real file: preview → confirm →
+  `Applied { deadline 122_000 }` → replay → durable `Applied` record with
+  the exact deadline, one actuator call total.
+
+**Workspace gates (2026-10-26):** fmt clean; clippy workspace-wide
+`-D warnings` clean; `cargo test --workspace --locked` **297 passed,
+0 failed** (core 170 incl. 9 coordinator; journal 10 incl. the trait
+end-to-end).
+
+**Not in this slice (recorded, not hidden):** the real actuator (stays
+disabled), restore triggers (RS-017), the one-action cooldown and
+stale-input trip (RS-018), agent/IPC wiring (the coordinator stamps no
+agent-instance/consent fields — the agent fills them), and the eligibility
+"no outstanding action" count is fed as 0 while the single slot models the
+cap (multi-action accounting arrives with RS-018).

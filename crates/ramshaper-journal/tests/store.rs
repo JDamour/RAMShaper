@@ -526,3 +526,101 @@ fn disk_full_blocks_new_records_but_preserves_and_recovers() {
         .record_prepared(&intent("after-recovery"))
         .expect("insert after cap lifted");
 }
+
+/// RS-016: the store implements the coordinator's ActionJournal trait and
+/// an end-to-end preview→confirm→replay round trip works over SQLite.
+#[test]
+fn store_plugs_into_the_coordinator_trait() {
+    use ramshaper_core::coordinator::{
+        ConfirmOutcome, Coordinator, PreviewRequest, PreviewVerdict, PriorityActuator,
+    };
+    use ramshaper_core::eligibility::{
+        ChildObservation, FocusObservation, OwnerSessionObservation, PriorityCapability,
+        PriorityClassObservation, SafetyClassification,
+    };
+    use ramshaper_core::identity::IdentityVerification;
+    use ramshaper_core::policy::PolicyRules;
+    use ramshaper_core::pressure::PressureLevel;
+    use std::cell::RefCell;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = JournalStore::open(&dir.path().join("j.db")).expect("open");
+
+    let identity = ramshaper_core::ProcessIdentity::new(4242, 133_000_000_000_000_000);
+    let allowlist = ramshaper_core::eligibility::Allowlist::new(
+        ramshaper_core::eligibility::ELIGIBILITY_RULES_VERSION,
+        &["synthetic-workload.exe"],
+    );
+    let mut coordinator = Coordinator::new(PolicyRules::default_experiment());
+
+    struct WinActuator {
+        written: RefCell<Vec<u32>>,
+    }
+    impl PriorityActuator for WinActuator {
+        fn write_verified(
+            &mut self,
+            _identity: &ramshaper_core::ProcessIdentity,
+            desired: u32,
+        ) -> Result<u32, ramshaper_core::coordinator::ActuatorError> {
+            self.written.borrow_mut().push(desired);
+            Ok(desired)
+        }
+    }
+
+    let verdict = coordinator.preview(
+        &store,
+        PreviewRequest {
+            identity: &identity,
+            image_name: "synthetic-workload.exe",
+            target: ramshaper_core::policy::TargetObservation {
+                identity_check: IdentityVerification::Matches,
+                owner_session: OwnerSessionObservation::CurrentUserSession,
+                focus: FocusObservation::Observed {
+                    target_foreground: false,
+                    observed_age_ms: 100,
+                },
+                classification: SafetyClassification::VerifiedNonCritical,
+                priority_class: PriorityClassObservation::Normal,
+                children: ChildObservation::Observed { live_children: 0 },
+                capability: PriorityCapability::Supported,
+            },
+            allowlist: &allowlist,
+            user_exclusions: &[],
+            pressure: PressureLevel::Elevated,
+            action_id: "act-store-1",
+            now_unix_ms: 1_000,
+            ttl_ms: None,
+            desired: 0x4000,
+        },
+    );
+    assert!(matches!(verdict, PreviewVerdict::Offered(_)), "{verdict:?}");
+
+    let mut actuator = WinActuator {
+        written: RefCell::new(Vec::new()),
+    };
+    let outcome = coordinator.confirm(&store, &mut actuator, &identity, "act-store-1", 2_000);
+    assert!(
+        matches!(
+            outcome,
+            ConfirmOutcome::Applied {
+                deadline_unix_ms: 122_000
+            }
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(actuator.written.borrow().len(), 1);
+
+    // Replay over SQLite: same deadline, no second write.
+    let replay = coordinator.confirm(&store, &mut actuator, &identity, "act-store-1", 3_000);
+    assert_eq!(
+        replay,
+        ConfirmOutcome::Replayed {
+            deadline_unix_ms: 122_000
+        }
+    );
+    assert_eq!(actuator.written.borrow().len(), 1);
+    // The record is durably Applied in the file-backed store.
+    let record = store.get("act-store-1").expect("get").expect("record");
+    assert_eq!(record.state, ActionState::Applied);
+    assert_eq!(record.applied_deadline_unix_ms, Some(122_000));
+}

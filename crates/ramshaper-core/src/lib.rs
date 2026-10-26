@@ -14,6 +14,7 @@
 pub mod clock;
 pub mod cohort;
 pub mod config;
+pub mod coordinator;
 pub mod eligibility;
 pub mod envelope;
 pub mod history;
@@ -37,6 +38,10 @@ pub use cohort::{
 };
 pub use config::{
     ConfigError, CoreConfig, WatchSettings, CONFIG_SCHEMA_VERSION, MODE_OBSERVE_ONLY,
+};
+pub use coordinator::{
+    ActionJournal, ActuatorError, ApplyOutcome, ConfirmOutcome, Coordinator, JournalFault,
+    PendingPreview, PreviewRequest, PreviewVerdict, PriorityActuator,
 };
 pub use eligibility::{
     evaluate, Allowlist, CheckId, CheckResult, ChildObservation, DenyReason, EligibilityInputs,

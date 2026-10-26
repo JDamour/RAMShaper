@@ -417,3 +417,43 @@ still ships empty: compatibility evidence (RS-024 Stage B) remains the
 gate before any target can become eligible, and protected-category
 detection beyond self-identification has no signal source yet — by
 recorded design, not omission.
+
+## ADR-031: Pure preview/confirm coordinator over journal + actuator traits — Accepted (implemented 2026-10-26; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+
+**Context:** RS-016 needs the 0.2 action lifecycle — scoped preview,
+confirmation with durable prepare, one verified write, idempotent replay —
+composed from the now-existing pure pieces (RS-015 gate, `policy` rules,
+RS-031 journal). The real actuator stays behind the disabled-actuation
+gate until recovery tests pass.
+
+**Decisions:**
+- The coordinator is **pure** (`ramshaper-core::coordinator`) and defines
+  the two seams it needs: `ActionJournal` (implemented by the SQLite store
+  in `ramshaper-journal`, errors mapped onto a `JournalFault` vocabulary)
+  and `PriorityActuator` (`write_verified` returns the read-back value;
+  errors are classified `IdentityMismatch` / clean `OsFailure` /
+  `UnknownOutcome` — the classification that decides `TargetGone` vs
+  `Failed` vs `Uncertain`).
+- Confirm ordering is contractual and test-enforced: **the durable
+  `Prepared` record exists before the OS call** (the fake actuator asserts
+  the journal state during the write).
+- **Replay precedes the pending-preview gate**: an already-`Applied`
+  action ID returns the original deadline without touching the actuator,
+  even after the preview slot has freed — the one-action slot is preview
+  state, idempotency is journal state.
+- The 30 s preview expiry is **inclusive** (confirm at exactly +30 s
+  works), matching ADR-029's boundary convention.
+- Failure mapping: clean `OsFailure` → `Failed` (unpinned);
+  `UnknownOutcome` or a read-back mismatch → `Uncertain` (pinned,
+  reconciliation decides); `IdentityMismatch` → `TargetGone` (nothing
+  written). Storage faults at any step → `StorageBlocked` (no applies;
+  recovery of recorded intents stays a journal concern).
+- The coordinator stamps no identity/consent fields itself — the agent
+  wiring fills `agent_instance_id`, `target_name` and `consent_id` when
+  this is integrated (RS-018 guardrails and live restore triggers are
+  RS-017/RS-018 work).
+
+**Consequences:** the full preview→confirm→replay round trip is pinned by
+unit tests over fakes and by an end-to-end test over the real SQLite store
+(+10 tests); wiring the real (disabled) actuator behind these traits is a
+small, auditable step for the G3 slice.

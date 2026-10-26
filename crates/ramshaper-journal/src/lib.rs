@@ -448,6 +448,72 @@ impl JournalStore {
     }
 }
 
+/// Map a typed journal error onto the coordinator's fault vocabulary.
+fn fault_of(error: JournalError) -> ramshaper_core::coordinator::JournalFault {
+    match error {
+        JournalError::StateConflict { .. } => {
+            ramshaper_core::coordinator::JournalFault::StateConflict(error.to_string())
+        }
+        JournalError::Missing(_) => {
+            ramshaper_core::coordinator::JournalFault::StateConflict(error.to_string())
+        }
+        other => ramshaper_core::coordinator::JournalFault::Storage(other.to_string()),
+    }
+}
+
+/// The SQLite store plugs into the RS-016 coordinator through the core
+/// trait, mapping typed journal errors onto the coordinator's fault
+/// vocabulary (everything storage-level blocks new applies).
+impl ramshaper_core::coordinator::ActionJournal for JournalStore {
+    fn available(&self) -> bool {
+        // An open store is writable; open-time refusal covers the
+        // schema/corrupt cases (the constructor never returns a store for
+        // an unusable file).
+        true
+    }
+
+    fn record_prepared(
+        &self,
+        intent: &ramshaper_core::journal::ActionIntent,
+    ) -> Result<bool, ramshaper_core::coordinator::JournalFault> {
+        match Self::record_prepared(self, intent).map_err(fault_of)? {
+            Recorded::Created => Ok(true),
+            Recorded::Existing(_) => Ok(false),
+        }
+    }
+
+    fn record_state(
+        &self,
+        action_id: &str,
+    ) -> Result<
+        Option<(ramshaper_core::journal::ActionState, Option<u64>)>,
+        ramshaper_core::coordinator::JournalFault,
+    > {
+        Ok(Self::get(self, action_id)
+            .map_err(fault_of)?
+            .map(|record| (record.state, record.applied_deadline_unix_ms)))
+    }
+
+    fn transition(
+        &self,
+        action_id: &str,
+        expected: ramshaper_core::journal::ActionState,
+        event: &ramshaper_core::journal::Event,
+        now_unix_ms: u64,
+    ) -> Result<ramshaper_core::journal::ActionState, ramshaper_core::coordinator::JournalFault>
+    {
+        Self::transition(
+            self,
+            action_id,
+            expected,
+            event,
+            now_unix_ms,
+            serde_json::json!({}),
+        )
+        .map_err(fault_of)
+    }
+}
+
 fn state_name(state: ActionState) -> &'static str {
     match state {
         ActionState::Prepared => "Prepared",
@@ -528,3 +594,4 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> Result<JournalRecord, rusqlite::Err
         evidence: serde_json::from_str(&evidence_json).unwrap_or(serde_json::Value::Null),
     })
 }
+
