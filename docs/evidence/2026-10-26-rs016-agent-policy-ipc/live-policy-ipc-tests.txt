@@ -1,0 +1,24 @@
+# RS-016 completion: agent policy IPC — live test run (2026-10-26)
+
+Host: MINGW64_NT-10.0-26300 x86_64, Microsoft Windows [Version 10.0.26300.9711]
+User context: standard user; live write target = the test's own spawned ping child (Normal -> Below Normal -> Normal), restored inside each test
+Injection seam: allowlist entry + classification override stand in for RS-024 Stage B evidence (production ships neither)
+
+## cargo test -p ramshaper-agent --test policy_ipc -- --test-threads=1
+
+   Compiling ramshaper-agent v0.1.0 (F:\_RAMShaper\crates\ramshaper-agent)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.70s
+     Running tests\policy_ipc.rs (target\debug\deps\policy_ipc-5db467b70e83abd8.exe)
+
+running 5 tests
+test disable_drains_outstanding_actions_and_blocks_new_previews ... 
+ok
+test disabled_gate_rejects_previews_until_explicitly_enabled ... ok
+test policy_gate_full_loop_applies_and_restores_a_spawned_child ... 
+ok
+test restore_of_an_unknown_id_is_an_explained_refusal ... ok
+test untested_third_party_targets_are_denied_with_the_full_report ... 
+ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+

@@ -1651,3 +1651,64 @@ only by the concurrent session's in-flight `tests/policy_ipc.rs` lint
 closed (no IPC path can create actions; enabling is the owner-gated G3
 consent flow); the live child-inheritance probe and allowlist population
 (RS-024 Stage B) remain.
+
+---
+
+# RS-016 completion — agent policy IPC + startup recovery wiring, 2026-10-26
+
+**Scope implemented:** the four policy-stage commands of contract 14 §7 are
+now served end to end: additive protocol-v1 payloads (`PreviewAction`,
+`ConfirmAction`, `RestoreAction`, `DisableActions` in `ramshaper-core::ipc`,
+with two additive error codes `InvalidArgument`/`Uncertain` and an optional
+`ErrorBody.detail` carrying the explain-all report of an `Ineligible`
+refusal); a new `ramshaper-agent::policy` **PolicyGate** (coordinator +
+restore-engine bookkeeping + SQLite journal + the real actuator behind one
+lock; preview bindings remembered per durable action ID); dispatch arms
+(gate absent ⇒ `Unsupported`, exactly like a pre-policy agent); and
+`serve()` gaining `Option<Arc<PolicyGate>>` — **agents started without it
+are unchanged, and the gate starts disabled: startup is Observe Only, and
+enabling is the G3 consent flow, never a protocol command.**
+
+**Safety properties, each pinned by a live test** (evidence in
+`docs/evidence/2026-10-26-rs016-agent-policy-ipc/`):
+- **Full loop over the live OS**: preview offered (fresh Elevated pressure,
+  tested allowlist, verified classification) → confirm durably prepares,
+  **reads the original through the identity-validated handle and pins it
+  before the write**, applies Below Normal to the test's spawned `ping`
+  child (independent adapter read confirms) → a lost-reply replay returns
+  the recorded deadline without a second write → restore returns the child
+  to Normal (adapter-confirmed).
+- **Untested third-party targets are denied with the full report**: the
+  production shape (empty allowlist, self-only classification) yields
+  `Ineligible` with the explain-all `detail` (`not_on_tested_allowlist`,
+  `classification_unknown`).
+- **Disabled gate** refuses previews (`Busy`) until explicitly enabled;
+  **DisableActions** stops new applies and drains everything outstanding
+  immediately (child verified back at Normal).
+- **Restore of an unknown ID** is an explained `InvalidArgument`.
+
+**Division of labor with the parallel session (collision #4, resolved by
+scoping):** the restore *direction* is theirs — `ramshaper-agent::policy_loop`
+(restores only; "nothing in this build can create actions"), wired into
+`serve()` to run startup reconciliation before the pipe accepts. The action-
+*creating* direction is this slice. The gate exposes its journal to the loop
+(`journal_clone` — one SQLite database, two handles).
+
+**Contract gap found and closed (this slice):** `Coordinator::confirm`
+persisted `original: None` ("read-side pinning later") — but nothing ever
+pinned it, so every restore would have hit the engine's honest
+"original never pinned → NeedsAttention" refusal. Closed with
+`JournalStore::record_original` (guarded to `Prepared` records) + the
+`ActionJournal::record_original` trait method + a pre-write
+read-through-the-validated-handle in confirm — the original is now durably
+committed **before** the OS call, as contract 14 §6 requires. Their in-flight
+test fakes were extended mechanically to match (recorded here per the
+inter-session convention).
+
+**Workspace gates (2026-10-26, integrated tree):** clippy
+`--workspace --all-targets -D warnings` clean; this slice's suites green
+(agent lib, `tests/policy_ipc.rs` 5/5 live, core 187 incl. the pinning,
+journal, windows 22). **One failing test remains, not this slice's:** the
+parallel session's in-flight `policy_loop` test
+`missed_deadline_counts_once_and_never_fakes_success` (their file was
+mid-write at gate time; recorded, not touched, not committed as green).
