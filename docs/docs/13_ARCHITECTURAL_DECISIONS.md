@@ -736,3 +736,30 @@ trip restores the parent and writes nothing to the descendant); the
 Stage B allowlist work has a findings source. The loop remains
 restore-direction only: the ticker consumes observations, it cannot
 create actions.
+
+## ADR-040: Session-lock trips come from a polled WTS query, not a window — Accepted (implemented 2026-10-26; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+
+**Context:** contract 14 §6 lists a session lock among the restore
+triggers, and 0.3.35's ticker fired every other one — the `SessionLocked`
+observation existed but nothing produced it. The documented event-driven
+route (`WTSRegisterSessionNotification`) needs a window and a message
+pump the agent does not have.
+
+**Decisions:**
+- The lock state is **polled** inside the 1 s ticker pass with
+  `WTSQuerySessionInformationW` + `WTSSessionInfoEx` (`SessionFlags`
+  against the documented lock/unlock constants, own session via
+  `ProcessIdToSessionId`, buffer freed on every path, every failure
+  `Unknown`). The trigger latency is bounded by the tick — inside the 2 s
+  verification target — and no window, message pump or thread is added.
+- Only a positive `Locked` observation trips; `Unknown` (query failure,
+  unexpected payload) never fabricates a trip, matching the feed's other
+  observations.
+- Tests never call `LockWorkStation`: locking the operator's real
+  desktop is hostile. The end-to-end chain is therefore covered by parts
+  (live adapter probe + loop trip test) plus the 2-line feed glue —
+  recorded as such, not claimed as a forced live run.
+
+**Consequences:** all contract §6 restore triggers now fire live in the
+shipped agent; the safety-feed shape (stateless, event-shaped, positive
+observations only) is complete and uniform.

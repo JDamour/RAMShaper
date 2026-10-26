@@ -15,7 +15,7 @@
 
 use ramshaper_core::eligibility::{
     ChildObservation, FocusObservation, OwnerSessionObservation, PriorityCapability,
-    PriorityClassObservation, ProtectedCategory, SafetyClassification,
+    PriorityClassObservation, ProtectedCategory, SafetyClassification, SessionLockObservation,
 };
 use ramshaper_core::snapshot::QueryFailure;
 use windows::Win32::System::Threading::{
@@ -153,6 +153,72 @@ pub fn observe_children(target_pid: u32) -> ChildObservation {
         },
         Err(failure) => ChildObservation::Unknown {
             reason: failure.to_string(),
+        },
+    }
+}
+
+/// Session-lock state of this process's interactive session
+/// (`WTSQuerySessionInformationW` with `WTSSessionInfoEx`; the query takes
+/// `None` as the server handle, which is the documented "current server").
+/// Every failure maps to `Unknown`, never a guess.
+///
+/// Flag semantics note (documented Win32 behavior): `WTS_SESSIONSTATE_LOCK`
+/// is 0 and `WTS_SESSIONSTATE_UNLOCK` is 1 on Windows 8+; Windows 7 and
+/// earlier reversed them. This build targets current Windows (26200) where
+/// the values are correct; the adapter compares against the documented
+/// constants verbatim rather than encoding the legacy reversal.
+#[must_use]
+pub fn observe_session_lock() -> SessionLockObservation {
+    use windows::Win32::System::RemoteDesktop::{
+        WTSFreeMemory, WTSQuerySessionInformationW, WTSSessionInfoEx, WTSINFOEXW,
+        WTS_SESSIONSTATE_LOCK, WTS_SESSIONSTATE_UNLOCK,
+    };
+
+    let session = match token::current_session_id() {
+        Ok(session) => session,
+        Err(failure) => {
+            return SessionLockObservation::Unknown {
+                reason: failure.to_string(),
+            }
+        }
+    };
+    let mut buffer = windows::core::PWSTR::null();
+    let mut returned = 0u32;
+    // SAFETY: documented out-pointer pair; the returned buffer is freed
+    // with WTSFreeMemory on every path below.
+    if let Err(error) = unsafe {
+        WTSQuerySessionInformationW(None, session, WTSSessionInfoEx, &mut buffer, &mut returned)
+    } {
+        return SessionLockObservation::Unknown {
+            reason: format!("WTSQuerySessionInformationW failed: {}", error.code().0),
+        };
+    }
+    if buffer.0.is_null() {
+        return SessionLockObservation::Unknown {
+            reason: "WTSQuerySessionInformationW returned no buffer".to_string(),
+        };
+    }
+    // SAFETY: the buffer holds a WTSINFOEXW for WTSSessionInfoEx (len
+    // checked against the struct size); freed below before every return.
+    let flags = unsafe {
+        let info = &*(buffer.0 as *const WTSINFOEXW);
+        if info.Level != 1 || returned < std::mem::size_of::<WTSINFOEXW>() as u32 {
+            None
+        } else {
+            Some(info.Data.WTSInfoExLevel1.SessionFlags)
+        }
+    };
+    // SAFETY: buffer came from WTSQuerySessionInformationW; freed exactly
+    // once here.
+    unsafe { WTSFreeMemory(buffer.0.cast()) };
+    match flags {
+        Some(value) if value == WTS_SESSIONSTATE_LOCK as i32 => SessionLockObservation::Locked,
+        Some(value) if value == WTS_SESSIONSTATE_UNLOCK as i32 => SessionLockObservation::Unlocked,
+        Some(value) => SessionLockObservation::Unknown {
+            reason: format!("undocumented SessionFlags value {value}"),
+        },
+        None => SessionLockObservation::Unknown {
+            reason: "WTSSessionInfoEx payload smaller than WTSINFOEXW".to_string(),
         },
     }
 }
@@ -309,6 +375,28 @@ mod tests {
             }
             FocusObservation::Unknown { reason } => {
                 println!("no interactive foreground in this session: {reason}");
+            }
+        }
+    }
+
+    #[test]
+    fn session_lock_probe_is_definite_on_an_interactive_rig() {
+        // The test runs in the owner's interactive session (the focus
+        // adapter relies on the same desktop), so the WTS query must
+        // resolve to a definite lock state — `Unknown` here would mean the
+        // adapter is broken, not that the session is in a special state.
+        // LockWorkStation is never called in tests (it would lock the
+        // operator's real screen); the Locked branch of the trip is
+        // covered by the loop's unit tests.
+        match observe_session_lock() {
+            SessionLockObservation::Locked => {
+                println!("session is locked (tests running against a locked console)");
+            }
+            SessionLockObservation::Unlocked => {
+                println!("session is unlocked (expected for an attended run)");
+            }
+            SessionLockObservation::Unknown { reason } => {
+                panic!("the WTS session-lock probe must resolve on this rig: {reason}");
             }
         }
     }

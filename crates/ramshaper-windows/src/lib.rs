@@ -13,7 +13,8 @@
 //!   job assignment via the attribute list; no suspension, no kill-on-close.
 //! - [`console`] — Ctrl+C cancellation event (`SetConsoleCtrlHandler`).
 //! - [`eligibility`] — eligibility signal-source adapters (R-03): owner/session,
-//!   foreground, priority class, children, capability probe, classification.
+//!   foreground, priority class, children, capability probe, classification,
+//!   session-lock state (WTS).
 //! - [`osinfo`] — OS/build metadata (`RtlGetVersion`, registry, `GetNativeSystemInfo`).
 //! - [`monitor`] — read-only adapter implementing the platform contracts.
 //!

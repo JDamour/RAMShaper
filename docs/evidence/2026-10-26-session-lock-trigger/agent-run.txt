@@ -1,0 +1,128 @@
+
+running 29 tests
+test consent::tests::everything_else_stays_observe_only ... ok
+test consent::tests::only_the_exact_word_consents ... ok
+test dispatch::policy_dispatch_tests::list_actions_serves_journal_records_when_the_gate_exists ... ok
+test dispatch::policy_dispatch_tests::policy_commands_answer_unsupported_without_a_gate ... ok
+test dispatch::policy_dispatch_tests::still_unknown_commands_stay_unsupported ... ok
+test dispatch::tests::capabilities_and_list_actions_succeed ... ok
+test dispatch::tests::fresh_snapshot_is_served_with_age ... ok
+test dispatch::tests::get_config_serves_the_inert_summary ... ok
+test dispatch::tests::get_config_summary_builds_from_a_config ... ok
+test dispatch::tests::get_processes_collection_failure_is_a_retryable_os_error ... ok
+test dispatch::tests::get_processes_serves_a_fresh_inventory_verbatim ... ok
+test dispatch::tests::get_processes_without_a_provider_is_unsupported_never_empty ... ok
+test dispatch::tests::response_correlates_request_ids ... ok
+test dispatch::tests::stale_or_missing_snapshot_is_an_error_never_old_data ... ok
+test dispatch::tests::subscribe_acknowledges_and_unknown_commands_are_unsupported ... ok
+test dispatch::tests::version_mismatch_is_rejected_before_dispatch ... ok
+test policy_loop::tests::child_spawned_trip_restores_and_records_the_finding ... ok
+test policy_loop::tests::disabled_loop_is_a_noop_everywhere ... ok
+test policy_loop::tests::focus_stale_beyond_the_freshness_window_trips ... ok
+test policy_loop::tests::missed_deadline_counts_once_and_never_fakes_success ... ok
+test policy_loop::tests::outstanding_applied_identity_serves_the_safety_feed ... ok
+test policy_loop::tests::safety_trip_restores_the_parent ... ok
+test policy_loop::tests::session_lock_trips_the_restore ... ok
+test policy_loop::tests::startup_recovery_reconciles_without_reapplying ... ok
+test policy_loop::tests::startup_recovery_restores_a_live_write ... ok
+test policy_loop::tests::ttl_tick_restores_an_expired_action ... ok
+test server::tests::peer_validation_decides_by_session_and_user ... ok
+test server::tests::process_scan_state_warms_then_rates_span_the_real_gap ... ok
+test server::tests::subscriber_queue_is_bounded_with_gap_markers ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+
+running 5 tests
+test tests::parses_serve_and_probe ... ok
+test tests::pipe_names_are_normalized ... ok
+test tests::policy_journal_flag_selects_the_policy_stage ... ok
+test tests::usage_errors ... ok
+test tests::version_and_help ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 15 tests
+test capabilities_over_real_pipe ... ok
+test get_config_over_real_pipe_serves_the_inert_summary ... ok
+test get_processes_rejects_wrong_version_before_any_scan ... ok
+test get_processes_serves_a_real_inventory_with_warming_then_real_rates ... ok
+test list_actions_is_empty_and_honest ... ok
+test malformed_frame_gets_one_error_then_close ... ok
+test malformed_framing_prefix_ends_the_connection_silently ... ok
+test oversized_frame_prefix_is_rejected_without_allocation ... ok
+test policy_commands_with_a_present_but_disabled_gate_answer_busy_not_unsupported ... ok
+test replayed_request_is_served_identically_on_the_same_connection ... ok
+test request_envelope_roundtrip_via_ipc_module ... ok
+test snapshot_over_real_pipe_carries_metrics_and_pressure ... ok
+test subscribe_streams_snapshots_until_peer_leaves ... ok
+test unknown_command_is_unsupported ... ok
+test version_mismatch_is_rejected_before_dispatch ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.89s
+
+
+running 3 tests
+test a_disabled_gate_refuses_every_action_command_with_explanations ... ok
+test malformed_payloads_are_invalid_arguments_not_panics ... ok
+test unknown_action_ids_never_create_journal_state ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.72s
+
+
+running 8 tests
+test child_spawned_after_apply_is_inherited_then_trips_the_restore ... 
+Pinging 127.0.0.1 with 32 bytes of data:
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+ok
+test disable_drains_outstanding_actions_and_blocks_new_previews ... 
+Pinging 127.0.0.1 with 32 bytes of data:
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+ok
+test disabled_gate_rejects_previews_until_explicitly_enabled ... ok
+test policy_gate_full_loop_applies_and_restores_a_spawned_child ... 
+Pinging 127.0.0.1 with 32 bytes of data:
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+ok
+test restore_of_an_unknown_id_is_an_explained_refusal ... ok
+test stopping_the_agent_runs_the_clean_exit_trigger ... 
+Pinging 127.0.0.1 with 32 bytes of data:
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+ok
+test ttl_expiry_restores_through_the_live_ticker ... 
+Pinging 127.0.0.1 with 32 bytes of data:
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+
+Ping statistics for 127.0.0.1:
+    Packets: Sent = 10, Received = 10, Lost = 0 (0% loss),
+Approximate round trip times in milli-seconds:
+    Minimum = 0ms, Maximum = 0ms, Average = 0ms
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+ok
+test untested_third_party_targets_are_denied_with_the_full_report ... 
+Pinging 127.0.0.1 with 32 bytes of data:
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 25.50s
+

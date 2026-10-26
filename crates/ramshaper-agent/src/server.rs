@@ -466,10 +466,11 @@ pub fn serve(
 ///   (`ForegroundReturned`); `Unknown` (no interactive desktop, query
 ///   failure) never fabricates a trip;
 /// - staleness: a snapshot older than the contract's 2 s apply-freshness
-///   window is the stale-input trip (`FocusStale` with the real age).
-///
-/// Session lock has no adapter in this build and is therefore not fed
-/// (recorded gap; the `SessionLocked` observation stays available).
+///   window is the stale-input trip (`FocusStale` with the real age);
+/// - session lock: a locked interactive session (`WTSQuerySessionInformationW`,
+///   polled each pass) trips immediately — the user is walking away from
+///   the consented experiment; `Unknown` lock state never fabricates a
+///   trip.
 fn feed_safety_observations(
     shared: &Shared,
     loop_: &mut crate::policy_loop::PolicyLoop<
@@ -529,6 +530,14 @@ fn feed_safety_observations(
     );
     if age_ms > ramshaper_core::eligibility::APPLY_INPUT_FRESHNESS_MS {
         loop_.observe_safety(&SafetyObservation::FocusStale { age_ms }, now_unix_ms);
+    }
+
+    // Session lock: the user walked away from the consented experiment.
+    // Only a positive Locked observation trips; Unknown never fabricates.
+    if let ramshaper_core::eligibility::SessionLockObservation::Locked =
+        ramshaper_windows::eligibility::observe_session_lock()
+    {
+        loop_.observe_safety(&SafetyObservation::SessionLocked, now_unix_ms);
     }
 }
 

@@ -2068,3 +2068,29 @@ different Toolhelp parent (observed: zero same-parent rows);
 crate **59 passed, 0 failed** (28 lib incl. the findings/identity/stale
 tests + 3 boundary + 15 ipc + 8 policy_ipc incl. both live ticker tests);
 workspace run in `docs/evidence/2026-10-26-policy-loop-ticker/`. ADR-039.
+
+# Session-lock restore trigger — WTS adapter + ticker feed, 2026-10-26
+
+**Scope implemented:** the last contract 14 §6 restore trigger that could
+not fire live. The `SessionLocked` observation and its guardrail trip
+existed (0.3.27) and the loop mapped the trigger (0.3.28), but no OS
+adapter produced the observation — 0.3.35's ticker feed recorded the gap.
+Now: core `SessionLockObservation` (`Locked`/`Unlocked`/`Unknown`);
+`ramshaper_windows::eligibility::observe_session_lock()` via
+`WTSQuerySessionInformationW` + `WTSSessionInfoEx` (server handle `None`
+= current server — `WTSCurrentServerHandle` does not exist in windows-rs
+0.62; `SessionFlags` compared against the documented
+`WTS_SESSIONSTATE_LOCK`(0)/`UNLOCK`(1); buffer freed on every path;
+level/size and undocumented values are `Unknown`; the documented pre-Win8
+flag reversal is noted, build 26200 uses correct semantics); the ticker
+feed polls it each pass and only a positive `Locked` trips.
+
+**Evidence:** live adapter probe resolves `Unlocked` on this attended
+interactive rig (`LockWorkStation` is never called in tests — it would
+lock the operator's real screen); the loop trip test pins the
+observation → restore path. **Boundary:** the end-to-end
+lock→trip→restore chain is parts-covered + inspection-verified, not
+forced live, for the same operator-hostility reason. Gates: fmt/clippy
+(`-D warnings`) clean on core/windows/agent; windows **45/0**, agent
+**60/0**, workspace **373/0**
+(`docs/evidence/2026-10-26-session-lock-trigger/`). ADR-040.

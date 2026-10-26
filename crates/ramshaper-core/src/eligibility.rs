@@ -65,6 +65,23 @@ pub enum FocusObservation {
     },
 }
 
+/// Session-lock observation (contract 14 §6: a session lock initiates
+/// restoration — the user is walking away from the consented experiment).
+/// The adapter reports what the OS said; every failure is `Unknown`,
+/// never a guess.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionLockObservation {
+    /// The interactive session is locked.
+    Locked,
+    /// The interactive session is unlocked.
+    Unlocked,
+    /// The lock state could not be determined.
+    Unknown {
+        /// Why the observation failed.
+        reason: String,
+    },
+}
+
 /// Categories that are always excluded from policy actions (contract 14 §5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProtectedCategory {

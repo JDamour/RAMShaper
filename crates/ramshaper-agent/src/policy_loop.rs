@@ -818,6 +818,24 @@ mod tests {
     }
 
     #[test]
+    fn session_lock_trips_the_restore() {
+        // Contract 14 §6: a session lock initiates restoration (the user
+        // is walking away). The adapter feeds SessionLocked only on a
+        // positive Locked WTS state; this pins the loop side of that path.
+        let journal = FakeJournal::default();
+        journal.seed_applied(4242, 500_000);
+        let mut loop_ = PolicyLoop::new(
+            PolicyLoopConfig { enabled: true },
+            journal,
+            FakeActuator::new(0x4000),
+        );
+        let tripped = loop_.observe_safety(&SafetyObservation::SessionLocked, 1_000);
+        assert!(tripped);
+        assert_eq!(loop_.stats().restored, 1);
+        assert!(loop_.findings().is_empty());
+    }
+
+    #[test]
     fn outstanding_applied_identity_serves_the_safety_feed() {
         let journal = FakeJournal::default();
         journal.seed_applied(4242, 500_000);
