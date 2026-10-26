@@ -185,3 +185,83 @@ pub fn security_descriptor_for_user(
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
+
+/// Restrict an existing file to the current user: owner and DACL are set
+/// to a single grant-all ACE for the current user's SID (no inherited
+/// ACEs). The action journal's privacy boundary (contract 14 §6: recovery
+/// records are user-private, like the pipe's explicit user-only DACL).
+///
+/// # Errors
+/// Typed [`QueryFailure`] with the failing API preserved.
+pub fn restrict_file_to_current_user(
+    path: &std::path::Path,
+) -> Result<(), ramshaper_core::snapshot::QueryFailure> {
+    use windows::Win32::Foundation::ERROR_SUCCESS;
+    use windows::Win32::Security::Authorization::SetNamedSecurityInfoW;
+    use windows::Win32::Security::Authorization::SE_FILE_OBJECT;
+    use windows::Win32::Security::{
+        GetSecurityDescriptorDacl, ACL, DACL_SECURITY_INFORMATION, OBJECT_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION,
+    };
+
+    // SetNamedSecurityInfoW rejects relative paths (ERROR_INVALID_PARAMETER);
+    // canonicalize to the absolute form.
+    let absolute = std::fs::canonicalize(path).map_err(|error| {
+        ramshaper_core::snapshot::QueryFailure::Unsupported(format!(
+            "cannot resolve the file path for hardening: {error}"
+        ))
+    })?;
+    let sid = current_user_sid()?;
+    let descriptor = security_descriptor_for_user(&sid)?;
+
+    // SAFETY: valid self-relative descriptor produced above; out-pointers
+    // valid; the returned pointers reference the descriptor's storage,
+    // which outlives the SetNamedSecurityInfoW call below.
+    let dacl = unsafe {
+        let descriptor_boxed = PSECURITY_DESCRIPTOR(descriptor.as_ptr() as *mut core::ffi::c_void);
+        let mut dacl: *mut ACL = std::ptr::null_mut();
+        let mut dacl_present = windows::Win32::Foundation::FALSE;
+        let mut dacl_defaulted = windows::Win32::Foundation::FALSE;
+        GetSecurityDescriptorDacl(
+            descriptor_boxed,
+            &mut dacl_present,
+            &mut dacl,
+            &mut dacl_defaulted,
+        )
+        .map_err(|e| ramshaper_core::snapshot::QueryFailure::OsError {
+            code: win32_code(&e),
+            function: "GetSecurityDescriptorDacl",
+        })?;
+        if !dacl_present.as_bool() {
+            return Err(ramshaper_core::snapshot::QueryFailure::Unsupported(
+                "security descriptor has no DACL".to_string(),
+            ));
+        }
+        dacl
+    };
+
+    // The DACL alone is applied: the descriptor carries no owner (the
+    // SDDL string is DACL-only), and the file's owner is already the
+    // creating user. Owner+DACL with a null owner is ERROR_INVALID_PARAMETER.
+    // SAFETY: valid wide path and DACL pointer from the descriptor.
+    unsafe {
+        let result = SetNamedSecurityInfoW(
+            PCWSTR(wide(&absolute.to_string_lossy()).as_ptr()),
+            SE_FILE_OBJECT,
+            OBJECT_SECURITY_INFORMATION(
+                (DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION).0,
+            ),
+            None,
+            None,
+            Some(dacl),
+            None,
+        );
+        if result != ERROR_SUCCESS {
+            return Err(ramshaper_core::snapshot::QueryFailure::OsError {
+                code: result.0,
+                function: "SetNamedSecurityInfoW",
+            });
+        }
+    }
+    Ok(())
+}

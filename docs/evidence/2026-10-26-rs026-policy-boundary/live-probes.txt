@@ -1,0 +1,57 @@
+# RS-026 policy-boundary review — live probes (2026-10-26, standard user)
+
+## agent started: serve --pipe-name rs026probe --policy-journal journal.sqlite, stdin closed
+stderr captured: consent declined at EOF ('no consent given; the session stays Observe Only'); startup reconciliation ran (resolved=0); agent PID 49076
+
+## journal file ACL (icacls)
+target\rs026-probe\journal.sqlite BUILTIN\Administrators:(I)(F)
+                                  NT AUTHORITY\SYSTEM:(I)(F)
+                                  NT AUTHORITY\Authenticated Users:(I)(M)
+                                  BUILTIN\Users:(I)(RX)
+
+Successfully processed 1 files; Failed processing 0 files
+
+## agent sockets (netstat for PID 49076; expect no tcp/udp listeners)
+(empty = no sockets held)
+
+## config export content (policy/consent material must be absent)
+schema_version = 1
+mode = "observe_only"
+
+[watch]
+interval_ms = 1000
+retention_ms = 900000
+
+[agent]
+
+[cohort]
+declared = "none"
+
+[profiles]
+active = "balanced"
+
+[exclusions]
+
+## Iterations of the hardening (recorded honestly):
+1. DACL-only, relative path -> ERROR_INVALID_PARAMETER (SetNamedSecurityInfoW rejects relative paths).
+2. DACL-only, canonicalized path -> applied, but inherited ACEs still flowed (no PROTECTED flag).
+3. DACL + PROTECTED_DACL flag, clean rebuild -> FINAL (below).
+
+## FINAL journal ACL (icacls after the fix; agent started with --policy-journal, stdin closed = declined):
+F:\_RAMShaper	argets026-probe\journal.sqlite KINAFORGE-STUDI\jmpat:(F)
+
+Successfully processed 1 files; Failed processing 0 files
+
+Exactly one explicit grant — the current user, full control — and NO
+inherited ACEs (Administrators/SYSTEM/Users rows are gone). The agent
+starts normally in this state (policy present, Observe Only, restore
+loop active). A hardening failure blocks the policy stage (the agent
+exits 1 with the message); it never leaves the journal unprotected.
+
+## Interim failures kept for the record: the two runs above the FINAL
+section show the pre-fix inherited ACL and the error-87 refusal.
+
+## Adversarial in-process probes (tests/policy_boundary.rs, 3 passed)
+- a_disabled_gate_refuses_every_action_command_with_explanations: Preview=Busy('disabled'), Confirm/Restore=InvalidArgument (binding/record checked first; nothing succeeds without the typed consent); DisableActions=ok idempotent no-op (can only reduce authority; empty drain); ListActions stays readable while disabled (observation, not action)
+- malformed_payloads_are_invalid_arguments_not_panics: non-numeric FILETIME, wrong payload shape, wrong JSON type -> InvalidArgument, no panic
+- unknown_action_ids_never_create_journal_state: probe requests for never-previewed IDs leave ListActions empty (no journal state fabricated)

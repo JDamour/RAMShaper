@@ -1,0 +1,20 @@
+# RS-026 policy-boundary review — static checks (2026-10-26)
+
+## network-capable crates on the host target (tokio must be absent; wasm-only per AT-23)
+warning: nothing to print.
+
+To find dependencies that require specific target platforms, try to use option `--target all` first, and then narrow your search scope accordingly.
+
+## SQLite dependency provenance (bundled; RS-031 era, unchanged since)
+rusqlite v0.32.1
+└── ramshaper-journal v0.1.0 (F:\_RAMShaper\crates\ramshaper-journal)
+    └── ramshaper-agent v0.1.0 (F:\_RAMShaper\crates\ramshaper-agent)
+        └── ramshaper-ui v0.1.0 (F:\_RAMShaper\crates\ramshaper-ui)
+
+## network API usage in the policy-stage modules (expect none)
+(empty above = none found)
+
+## workspace dependency additions since 0.3.22 (policy stage)
+ Cargo.lock | 1 +
+ Cargo.toml | 1 +
+ 2 files changed, 2 insertions(+)

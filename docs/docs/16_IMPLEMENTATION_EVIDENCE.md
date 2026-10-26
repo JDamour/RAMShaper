@@ -1955,3 +1955,72 @@ session with a populated allowlist — now startable, evidence pending).
 sources into 0.3.32 while `consent.rs` was untracked — 0.3.32 as committed
 did not compile; 0.3.33 completes it (the green gate numbers in both
 entries were measured on the integrated working tree).
+
+---
+
+# RS-026 — boundary review of the policy stage, 2026-10-26
+
+**Scope reviewed** (the surfaces that changed since the last boundary
+review, AT-23 0.3.13): the policy IPC commands (`PreviewAction`,
+`ConfirmAction`, `RestoreAction`, `DisableActions`), the G3 consent path
+(`--policy-journal` + typed `ENABLE`, landed as 0.3.33), the SQLite
+action journal, the `ListActions` record surface, and the dependency
+graph of the new modules.
+
+**Static checks** (evidence `docs/evidence/2026-10-26-rs026-policy-boundary/static-checks.txt`):
+- `cargo tree -i tokio` on the host target: **absent** (as at AT-23; the
+  wasm-only path is unchanged). No network API usage in any policy-stage
+  module (`policy.rs`, `consent.rs`, `policy_loop.rs`, `priority.rs`,
+  `coordinator.rs`, journal lib) — grep for
+  `TcpStream|UdpSocket|TcpListener|std::net|tokio|reqwest|hyper`: empty.
+- Dependency additions since 0.3.22: exactly one windows-rs **feature**
+  (`Win32_System_JobObjects`, the RS-020 spike) on the already-pinned
+  `=0.62.2` crate. No new crates.
+- `rusqlite` (bundled) remains the only storage dependency, reaching only
+  the agent via `ramshaper-journal`.
+
+**Live probes** (gated agent on a real pipe, stdin closed ⇒ consent
+declined; `live-probes.txt`):
+- **Journal privacy FINDING, fixed in this review**: a newly created
+  journal file inherited the directory ACL — on this machine,
+  `Authenticated Users` had Modify. Recovery records (target labels,
+  pids, original values) are user-private per contract 14 §6, like the
+  pipe's explicit user-only DACL. Fix: new
+  `ramshaper-windows::token::restrict_file_to_current_user` (single
+  grant-all ACE for the current user, `PROTECTED_DACL` so no inherited
+  ACEs flow), applied at gate open in `consent::open_session_gate`.
+  Verified live: the journal now shows exactly one ACE
+  (`KINAFORGE-STUDI\jmpat:(F)`). Two implementation iterations recorded
+  honestly (relative-path error 87; missing PROTECTED flag let
+  inheritance flow). A hardening failure blocks the policy stage (exit 1)
+  — it never leaves the journal unprotected.
+- Export stays identity-free; the agent holds no tcp/udp sockets
+  (netstat for the agent PID: empty) — policy adds no network surface.
+- Consent semantics verified live: closed stdin ⇒ "no consent given; the
+  session stays Observe Only", restore loop active, agent serves
+  read-only normally.
+
+**Adversarial in-process probes** (`tests/policy_boundary.rs`, 3 tests,
+real pipe + real journal): with the gate present-but-disabled, a same-user
+client gets typed refusals for every action command (Preview `Busy`
+explaining the disabled session; Confirm/Restore `InvalidArgument` —
+binding/record checks run first; nothing succeeds without the consent
+word); `DisableActions` succeeds as an **idempotent no-op that can only
+reduce authority** (empty drain), pinned deliberately; malformed payloads
+(non-numeric FILETIME, wrong shape, wrong JSON type) are
+`InvalidArgument`, never a panic; probe requests for never-previewed IDs
+leave `ListActions` empty (no fabricated journal state); `ListActions`
+stays readable while disabled (observation, not action).
+
+**Gates (2026-10-26, excluding the sibling session's in-flight
+`ramshaper-bench` crate):** clippy `-D warnings` clean across the other
+seven crates; **347 passed / 0 failed** (incl. the 3 new boundary tests).
+Their in-flight `policy_ipc::child_spawned_after_apply…` AT-14 live test
+is timing-flaky on a cold PowerShell start (failed once, passed on
+re-run; their uncommitted file, recorded not touched — mechanical
+unblock of two clippy items in their quiet >25 min `policy_loop.rs`
+applied per convention).
+
+**Not covered here:** the bench workload/analysis boundary (sibling's
+in-flight RS-024 Stage B slice — reviewed when it lands); RS-027
+packaging/provenance (release-gated).

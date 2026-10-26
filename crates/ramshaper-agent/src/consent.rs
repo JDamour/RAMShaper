@@ -14,10 +14,8 @@
 
 use std::path::Path;
 
-use ramshaper_core::eligibility::{Allowlist, ELIGIBILITY_RULES_VERSION};
-use ramshaper_journal::JournalError;
-
 use crate::policy::PolicyGate;
+use ramshaper_core::eligibility::{Allowlist, ELIGIBILITY_RULES_VERSION};
 
 /// The exact word the operator must type to enable the policy session.
 /// Strict: case-sensitive, alone on the line. Anything else — including a
@@ -36,20 +34,32 @@ pub fn decide(input: Option<&str>) -> bool {
 /// the compatibility allowlist is **empty** (nothing has passed RS-024
 /// Stage B testing, so no target is eligible for applies until evidence
 /// exists), and the user's configured exclusions can only reduce
-/// eligibility further.
+/// eligibility further. The journal file is hardened to the current user
+/// (owner + single-ACE DACL, no inheritance) — recovery records are
+/// user-private, like the pipe (contract 14 §6); a hardening failure
+/// blocks the policy stage exactly like an unusable journal.
 ///
 /// # Errors
-/// [`JournalError`] when the journal cannot be opened — an unusable
-/// journal blocks the policy stage (not the observe-only agent).
+/// A description string when the journal cannot be opened or cannot be
+/// restricted to the current user — both block the policy stage (not the
+/// observe-only agent).
 pub fn open_session_gate(
     journal_path: &Path,
     user_exclusions: Vec<String>,
-) -> Result<PolicyGate, JournalError> {
-    PolicyGate::open(
+) -> Result<PolicyGate, String> {
+    let gate = PolicyGate::open(
         journal_path,
         Allowlist::new(ELIGIBILITY_RULES_VERSION, &[]),
         user_exclusions,
     )
+    .map_err(|error| error.to_string())?;
+    ramshaper_windows::token::restrict_file_to_current_user(journal_path).map_err(|failure| {
+        format!(
+            "journal at {} could not be restricted to the current user: {failure}",
+            journal_path.display()
+        )
+    })?;
+    Ok(gate)
 }
 
 #[cfg(test)]
