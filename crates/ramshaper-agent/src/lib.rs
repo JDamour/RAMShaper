@@ -6,6 +6,7 @@
 
 #![deny(unsafe_code)]
 
+pub mod consent;
 pub mod dispatch;
 pub mod policy;
 pub mod policy_loop;

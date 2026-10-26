@@ -25,6 +25,16 @@ impl TestAgent {
     /// Serve on a unique pipe at a fast cadence. Panics if the accept loop
     /// reports an early failure (surfaces real pipe errors).
     fn start(name: &str, interval_ms: u64) -> TestAgent {
+        Self::start_with_policy(name, interval_ms, None)
+    }
+
+    /// The same, with the policy gate when the test needs one (present,
+    /// disabled — enabling is the console consent, not a test concern).
+    fn start_with_policy(
+        name: &str,
+        interval_ms: u64,
+        policy: Option<Arc<ramshaper_agent::policy::PolicyGate>>,
+    ) -> TestAgent {
         let stop = Arc::new(ManualResetEvent::new().expect("stop event"));
         let config_summary = ramshaper_agent::dispatch::ConfigSummary {
             mode: "observe_only".to_string(),
@@ -36,7 +46,7 @@ impl TestAgent {
             format!(r"\\.\pipe\{name}"),
             WatchConfig::new(interval_ms).expect("cadence"),
             config_summary,
-            None,
+            policy,
         )
         .expect("agent serves");
         // Give the accept thread a moment; fail loudly on early errors.
@@ -338,4 +348,57 @@ fn get_config_over_real_pipe_serves_the_inert_summary() {
     let bad = request(&full_pipe(&pipe), &envelope(2, "GetConfig"));
     assert_eq!(bad["ok"], false, "{bad}");
     assert_eq!(bad["error"]["code"], "VersionMismatch");
+}
+
+#[test]
+fn policy_commands_with_a_present_but_disabled_gate_answer_busy_not_unsupported() {
+    // The shipped-surface distinction (contract 14 §5/§7): an agent
+    // started WITHOUT the journal answers `Unsupported` (older-agent
+    // behavior); an agent started WITH `--policy-journal` but not yet
+    // consented answers `Busy` with the explicit reason — the stage
+    // exists, the session is Observe Only until the console consent.
+    use ramshaper_core::eligibility::{Allowlist, SafetyClassification, ELIGIBILITY_RULES_VERSION};
+    use ramshaper_journal::JournalStore;
+
+    let pipe = format!("ramshaper-test-pol-{}", std::process::id());
+    let gate = Arc::new(
+        ramshaper_agent::policy::PolicyGate::open_with_classification(
+            JournalStore::open_in_memory().expect("journal"),
+            Allowlist::new(ELIGIBILITY_RULES_VERSION, &[]),
+            Vec::new(),
+            Box::new(|_pid: u32, _image: &str| SafetyClassification::Unknown {
+                reason: "disabled gate; classification never consulted".to_string(),
+            }),
+        ),
+    );
+    let _agent = TestAgent::start_with_policy(&pipe, 500, Some(Arc::clone(&gate)));
+    std::thread::sleep(Duration::from_millis(200));
+
+    // The observe-only surface is unchanged.
+    let caps = request(&full_pipe(&pipe), &envelope(1, "GetCapabilities"));
+    assert_eq!(caps["ok"], true, "{caps}");
+
+    // A well-formed preview meets the disabled gate, not a missing one.
+    let preview = RequestEnvelope {
+        protocol_version: 1,
+        request_id: "pol-1".to_string(),
+        agent_instance_id: None,
+        command: "PreviewAction".to_string(),
+        payload: Some(serde_json::json!({
+            "action_id": "pipe-1",
+            "pid": 0,
+            "creation_filetime": "0",
+            "image_name": "x.exe"
+        })),
+    };
+    let response = request(&full_pipe(&pipe), &preview);
+    assert_eq!(response["ok"], false, "{response}");
+    assert_eq!(response["error"]["code"], "Busy");
+    assert!(
+        response["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("policy is disabled")),
+        "the refusal must name the disabled session: {response}"
+    );
+    assert!(!gate.enabled());
 }

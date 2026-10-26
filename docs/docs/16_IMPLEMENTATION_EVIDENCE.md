@@ -1866,3 +1866,44 @@ gate), per doc 08 the *pressure*-style workload variant (disposable
 environment only), and the preregistration document that freezes the
 thresholds before a real trial — the labels' thresholds are code constants
 here, and a real run must declare them externally first.
+
+---
+
+# RS-013 first slice — Actions UI + ListActions completion, 2026-10-26
+
+**Scope implemented:** the action journal is now visible end to end.
+Agent side: `ListActions` serves **real journal records** when the agent
+was started with the policy gate — unresolved records first (the
+pending/conflict set), then the newest history window
+(`JournalStore::recent`, capped at 50 rows so a response can never
+approach the 1 MiB frame cap), deduplicated by action ID; every row
+carries state, target label, pid, original/desired, timestamps and
+pending/pinned flags. Gateless agents (the production default) keep the
+existing observe-only stub — they have no journal at all.
+UI side: a fourth **Actions page** (`--page actions`) rendering the
+records with state/deadline/pending text (no color-only information, per
+the AT-19 rule; each row is one accessible label), plus the
+**Restore** (per pending row) and **Disable all + restore** controls wired
+to `RestoreAction`/`DisableActions`. A control's outcome — including an
+agent's `Unsupported` refusal — is rendered verbatim in the page note,
+never a silent no-op.
+
+**G3-gating boundary kept:** production agents still start gateless, so
+the controls answer `unsupported: this agent was started without the
+policy gate` and the page explains it. Starting actions from the UI (the
+preview/confirm consent flow) is deliberately not built — that is the
+owner-gated G3 consent flow. The wiring is exercised in tests against a
+policy-enabled gate (dispatch-level ListActions over a seeded journal;
+live write/restore covered by the RS-016 e2e).
+
+**Tests:** agent 25 lib tests (incl. `list_actions_serves_journal_records_when_the_gate_exists`
+— one seeded Applied record served with original/desired and the correct
+unresolved=1 accounting); UI 13 (incl. the row-model tests: pending vs
+history badges, Conflict not restorable, expired/future deadline text,
+state announced as text on every row, empty stub renders nothing).
+Workspace gates: fmt clean, clippy `-D warnings` clean, **357 passed /
+0 failed**. Evidence in `docs/evidence/2026-10-26-rs013-actions-ui/`.
+
+**Not in this slice:** the preview/confirm consent UI (G3 flow, owner
+call); startup reconciliation surfacing in the UI beyond record states;
+the interactive AT-19 pass for the new page (checklist-ready, human task).

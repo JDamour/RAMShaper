@@ -146,11 +146,18 @@ pub fn dispatch(envelope: &RequestEnvelope, context: &DispatchContext<'_>) -> Re
             context.instance_id,
             json!({ "subscribed": true, "protocol_version": PROTOCOL_VERSION }),
         ),
-        COMMAND_LIST_ACTIONS => Response::ok(
-            &envelope.request_id,
-            context.instance_id,
-            json!({ "actions": [], "note": "no policy actions exist in this build (observe only)" }),
-        ),
+        COMMAND_LIST_ACTIONS => match context.policy {
+            Some(gate) => Response::ok(
+                &envelope.request_id,
+                context.instance_id,
+                gate.list_actions(ACTIONS_HISTORY_LIMIT),
+            ),
+            None => Response::ok(
+                &envelope.request_id,
+                context.instance_id,
+                json!({ "actions": [], "note": "no policy actions exist in this build (observe only)" }),
+            ),
+        },
         COMMAND_GET_CONFIG => Response::ok(
             &envelope.request_id,
             context.instance_id,
@@ -281,6 +288,10 @@ pub fn dispatch(envelope: &RequestEnvelope, context: &DispatchContext<'_>) -> Re
     }
 }
 
+/// History rows served by `ListActions` beyond the unresolved set
+/// (bounded: a response can never approach the 1 MiB frame cap).
+pub const ACTIONS_HISTORY_LIMIT: usize = 50;
+
 /// Classify the newest snapshot's pressure for the policy gate: missing or
 /// malformed evidence is `Unknown` (never guessed) — the preview then
 /// answers "pressure not elevated".
@@ -350,6 +361,75 @@ mod policy_dispatch_tests {
             assert_eq!(error.code, ErrorCode::Unsupported, "{command}");
             assert!(error.message.contains("policy gate"));
         }
+    }
+
+    #[test]
+    fn list_actions_serves_journal_records_when_the_gate_exists() {
+        use crate::policy::PolicyGate;
+        use ramshaper_core::eligibility::{
+            Allowlist, SafetyClassification, ELIGIBILITY_RULES_VERSION,
+        };
+        use ramshaper_core::ipc::COMMAND_LIST_ACTIONS;
+        use ramshaper_journal::JournalStore;
+
+        let store = JournalStore::open_in_memory().expect("journal");
+        let gate = PolicyGate::open_with_classification(
+            store,
+            Allowlist::new(ELIGIBILITY_RULES_VERSION, &[]),
+            Vec::new(),
+            Box::new(|_, _| SafetyClassification::VerifiedNonCritical),
+        );
+        // Seed one Applied record through the gate's own store.
+        use ramshaper_core::journal::{
+            ActionIntent, ActionState, Event, Property, ACTION_KIND_CPU_PRIORITY,
+        };
+        let intent = ActionIntent {
+            action_id: "act-1".to_string(),
+            agent_instance_id: "agent-1".to_string(),
+            pid: 4242,
+            creation_filetime: 133_000_000_000_000_000,
+            target_name: "leaf.exe".to_string(),
+            property: Property {
+                kind: ACTION_KIND_CPU_PRIORITY,
+                original: Some(0x20),
+                desired: 0x4000,
+            },
+            consent_id: "c".to_string(),
+            rule_version: "policy_v1".to_string(),
+            ttl_ms: 120_000,
+            created_at_unix_ms: 1_000,
+        };
+        {
+            // journal_clone is pub; seed through the concrete store.
+            let journal = gate.journal_clone();
+            journal.record_prepared(&intent).expect("prepare");
+            journal.record_original("act-1", 0x20).expect("pin");
+            journal
+                .transition(
+                    "act-1",
+                    ActionState::Prepared,
+                    &Event::ApplyVerified {
+                        deadline_unix_ms: 2_000,
+                    },
+                    1_000,
+                    serde_json::json!({}),
+                )
+                .expect("apply");
+        }
+
+        let mut ctx = ctx();
+        ctx.policy = Some(&gate);
+        let response = dispatch(&envelope(1, COMMAND_LIST_ACTIONS), &ctx);
+        assert!(response.ok, "ListActions with a gate must succeed");
+        let data = response.data.expect("data");
+        let actions = data["actions"].as_array().expect("actions array");
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0]["action_id"], "act-1");
+        assert_eq!(actions[0]["state"], "Applied");
+        assert_eq!(actions[0]["original"], 0x20);
+        assert_eq!(actions[0]["desired"], 0x4000);
+        assert_eq!(actions[0]["unresolved"], true, "Applied is outstanding");
+        assert_eq!(data["unresolved"], 1, "one outstanding record");
     }
 
     #[test]

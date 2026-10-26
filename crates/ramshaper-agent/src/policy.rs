@@ -134,6 +134,33 @@ impl PolicyGate {
         self.inner.lock().expect("policy lock").enabled
     }
 
+    /// Read-only `ListActions` material: unresolved records first (the
+    /// pending/conflict set the UI must not miss), then the most recent
+    /// history window, deduplicated by action ID. Bounded so a response
+    /// can never approach the 1 MiB frame cap.
+    #[must_use]
+    pub fn list_actions(&self, history_limit: usize) -> serde_json::Value {
+        let inner = self.inner.lock().expect("policy lock");
+        let unresolved = inner.journal.unresolved().unwrap_or_default();
+        let unresolved_ids: Vec<String> = unresolved
+            .iter()
+            .map(|r| r.intent.action_id.clone())
+            .collect();
+        let history = inner.journal.recent(history_limit).unwrap_or_default();
+        let mut rows: Vec<serde_json::Value> =
+            unresolved.iter().map(|r| action_row(r, true)).collect();
+        for record in &history {
+            if !unresolved_ids.contains(&record.intent.action_id) {
+                rows.push(action_row(record, false));
+            }
+        }
+        serde_json::json!({
+            "actions": rows,
+            "unresolved": unresolved.len(),
+            "note": "records from the action journal; unresolved records need attention or a due restore",
+        })
+    }
+
     /// A clone of the gate's journal store for the restore-direction loop
     /// (`policy_loop`): one SQLite database, two handles.
     #[must_use]
@@ -459,6 +486,24 @@ impl PolicyGate {
             "unresolved": unresolved,
         }))
     }
+}
+
+/// One journal record as the `ListActions` wire row. `unresolved` marks
+/// the pending/conflict set; `pinned` flags recovery intent.
+fn action_row(record: &ramshaper_journal::JournalRecord, unresolved: bool) -> serde_json::Value {
+    serde_json::json!({
+        "action_id": record.intent.action_id,
+        "state": format!("{:?}", record.state),
+        "target_name": record.intent.target_name,
+        "pid": record.intent.pid,
+        "original": record.intent.property.original,
+        "desired": record.intent.property.desired,
+        "created_at_unix_ms": record.intent.created_at_unix_ms,
+        "applied_deadline_unix_ms": record.applied_deadline_unix_ms,
+        "terminal_at_unix_ms": record.terminal_at_unix_ms,
+        "unresolved": unresolved,
+        "pinned": record.is_pinned(),
+    })
 }
 
 /// The handler result before envelope framing: data or typed failure.

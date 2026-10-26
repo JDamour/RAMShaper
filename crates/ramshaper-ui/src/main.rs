@@ -56,8 +56,8 @@ OPTIONS:
                          logon session)
     --poll-ms <MS>       Poll with one-shot GetSnapshot probes every MS ms
                          instead of subscribing to the snapshot stream
-    --page <NAME>        Start page: 'overview' (default), 'applications'
-                         or 'profiles'
+    --page <NAME>        Start page: 'overview' (default), 'applications',
+                         'profiles' or 'actions'
 ";
 
 /// Last successful update, for the freshness ("Last updated Xs ago") label.
@@ -105,8 +105,14 @@ fn main() {
             "--page" => match args.next() {
                 Some(value) => {
                     let page = value.to_string_lossy().to_string();
-                    if page != "overview" && page != "applications" && page != "profiles" {
-                        eprintln!("error: --page must be 'overview', 'applications' or 'profiles'");
+                    if page != "overview"
+                        && page != "applications"
+                        && page != "profiles"
+                        && page != "actions"
+                    {
+                        eprintln!(
+                            "error: --page must be 'overview', 'applications', 'profiles' or 'actions'"
+                        );
                         std::process::exit(2);
                     }
                     initial_page = Some(page);
@@ -246,36 +252,49 @@ fn main() {
                     .map(|guard| guard.page.clone())
                     .unwrap_or_default();
                 let want_processes = page == "applications";
+                let want_actions = page == "actions";
                 let want_config = page == "profiles"
                     || !config_fetched.load(std::sync::atomic::Ordering::Relaxed);
-                if (!want_processes && !want_config)
+                if (!want_processes && !want_config && !want_actions)
                     || minimized.load(std::sync::atomic::Ordering::Relaxed)
                     || in_flight.swap(true, std::sync::atomic::Ordering::SeqCst)
                 {
                     return;
                 }
+                let kind = if want_processes {
+                    FetchKind::Processes
+                } else if want_actions {
+                    FetchKind::Actions
+                } else {
+                    FetchKind::Config
+                };
                 let weak = weak.clone();
                 let page_state = Arc::clone(&page_state);
                 let in_flight = Arc::clone(&in_flight);
                 let config_fetched = Arc::clone(&config_fetched);
                 let pipe = pipe.clone();
                 std::thread::spawn(move || {
-                    let want_processes_now = want_processes;
-                    let result = if want_processes_now {
-                        fetch_processes(&pipe)
-                    } else {
-                        fetch_config(&pipe)
+                    let result = match kind {
+                        FetchKind::Processes => fetch_processes(&pipe),
+                        FetchKind::Actions => fetch_actions(&pipe),
+                        FetchKind::Config => fetch_config(&pipe),
                     };
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(app) = weak.upgrade() {
-                            if want_processes_now {
-                                apply_process_result(&app, &page_state, result);
-                            } else {
-                                if result.is_ok() {
-                                    config_fetched
-                                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                            match kind {
+                                FetchKind::Processes => {
+                                    apply_process_result(&app, &page_state, result);
                                 }
-                                apply_config(&app, result);
+                                FetchKind::Actions => {
+                                    apply_actions(&app, result);
+                                }
+                                FetchKind::Config => {
+                                    if result.is_ok() {
+                                        config_fetched
+                                            .store(true, std::sync::atomic::Ordering::Relaxed);
+                                    }
+                                    apply_config(&app, result);
+                                }
                             }
                         }
                         in_flight.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -283,6 +302,44 @@ fn main() {
                 });
             },
         );
+    }
+
+    // RS-013 controls: restore one action / disable everything. One-shot
+    // requests on their own connections; the outcome lands in the note and
+    // the list refreshes on the next poll tick.
+    {
+        let weak = weak.clone();
+        let pipe = pipe_name.clone();
+        app.global::<UiState<'_>>()
+            .on_restore_action(move |action_id| {
+                let action_id = action_id.to_string();
+                let weak = weak.clone();
+                let pipe = pipe.clone();
+                std::thread::spawn(move || {
+                    let result = run_restore(&pipe, &action_id);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(app) = weak.upgrade() {
+                            apply_action_command_result(&app, "Restore", result);
+                        }
+                    });
+                });
+            });
+    }
+    {
+        let weak = weak.clone();
+        let pipe = pipe_name.clone();
+        app.global::<UiState<'_>>().on_disable_actions(move || {
+            let weak = weak.clone();
+            let pipe = pipe.clone();
+            std::thread::spawn(move || {
+                let result = run_disable(&pipe);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(app) = weak.upgrade() {
+                        apply_action_command_result(&app, "Disable", result);
+                    }
+                });
+            });
+        });
     }
 
     // Visibility poll on a PLAIN thread: the Slint event loop stops waking
@@ -902,6 +959,230 @@ fn apply_process_result(
 /// One-shot `GetProcesses` on a fresh connection (RS-011). Deliberately not
 /// the subscribe stream: a UI that is not looking at the table costs the
 /// agent nothing.
+/// Which page material the shared poll fetches this tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FetchKind {
+    Processes,
+    Actions,
+    Config,
+}
+
+/// One ListActions response row rendered in the Actions page.
+#[derive(Debug, Clone, PartialEq)]
+struct ActionRowData {
+    action_id: String,
+    target: String,
+    state: String,
+    deadline: String,
+    badge: String,
+    restorable: bool,
+    accessible: String,
+}
+
+/// Parse a `ListActions` payload into rows (pure; testable). Restorable =
+/// unresolved records in a state a restore still applies to; terminal rows
+/// render as history.
+#[cfg(windows)]
+fn actions_rows_from(data: &serde_json::Value) -> Vec<ActionRowData> {
+    use ramshaper_core::clock::WallClock;
+    let mut rows = Vec::new();
+    let Some(actions) = data["actions"].as_array() else {
+        return rows;
+    };
+    for action in actions {
+        let state = action["state"].as_str().unwrap_or("Unknown").to_string();
+        let unresolved = action["unresolved"].as_bool().unwrap_or(false);
+        let deadline = action["applied_deadline_unix_ms"].as_u64().map_or_else(
+            || "no deadline".to_string(),
+            |deadline| {
+                let now = ramshaper_core::SystemClock.unix_epoch_ms();
+                if now >= deadline {
+                    "expired".to_string()
+                } else {
+                    format!("expires in {} s", (deadline - now) / 1_000)
+                }
+            },
+        );
+        let badge = if unresolved { "pending" } else { "history" }.to_string();
+        let restorable = unresolved && matches!(state.as_str(), "Applied" | "RestorePending");
+        let action_id = action["action_id"].as_str().unwrap_or("?").to_string();
+        rows.push(ActionRowData {
+            accessible: format!(
+                "Action {action_id} on {}, state {state}, {badge}, deadline {deadline}",
+                action["target_name"].as_str().unwrap_or("unknown target"),
+            ),
+            action_id,
+            target: action["target_name"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_string(),
+            state,
+            deadline,
+            badge,
+            restorable,
+        });
+    }
+    rows
+}
+
+#[cfg(windows)]
+fn fetch_actions(pipe_name: &str) -> Result<serde_json::Value, String> {
+    use ramshaper_core::ipc::{RequestEnvelope, COMMAND_LIST_ACTIONS, PROTOCOL_VERSION};
+    use ramshaper_windows::pipe::{client_connect, read_frame, write_frame};
+
+    let client =
+        client_connect(pipe_name).map_err(|error| format!("agent not reachable ({error})"))?;
+    let envelope = RequestEnvelope {
+        protocol_version: PROTOCOL_VERSION,
+        request_id: "ui-actions".to_string(),
+        agent_instance_id: None,
+        command: COMMAND_LIST_ACTIONS.to_string(),
+        payload: None,
+    };
+    let payload =
+        serde_json::to_vec(&envelope).map_err(|error| format!("encode failed: {error}"))?;
+    write_frame(&client, &payload).map_err(|error| format!("write failed: {error}"))?;
+    let frame = read_frame(&client).map_err(|error| format!("read failed: {error}"))?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&frame).map_err(|error| format!("malformed response: {error}"))?;
+    if value["ok"] == true {
+        Ok(value["data"].clone())
+    } else {
+        let code = value["error"]["code"].as_str().unwrap_or("unknown");
+        let message = value["error"]["message"].as_str().unwrap_or("");
+        Err(format!("{code}: {message}"))
+    }
+}
+
+#[cfg(not(windows))]
+fn fetch_actions(_pipe_name: &str) -> Result<serde_json::Value, String> {
+    Err("the UI requires the Windows adapter".to_string())
+}
+
+/// Push a ListActions result into the Actions page (RS-013). An agent
+/// without the policy gate answers the gateless stub (an empty list with
+/// the observe-only note) — rendered as data, never as an error.
+#[cfg(windows)]
+fn apply_actions(app: &AppWindow, result: Result<serde_json::Value, String>) {
+    let ui = app.global::<UiState<'_>>();
+    match result {
+        Ok(data) => {
+            let rows = actions_rows_from(&data);
+            let pending = rows.iter().filter(|r| r.badge == "pending").count();
+            let note = format!(
+                "{} action record(s), {} pending. {}",
+                rows.len(),
+                pending,
+                data["note"].as_str().unwrap_or("")
+            );
+            let model: Vec<ActionRow> = rows
+                .iter()
+                .map(|row| ActionRow {
+                    action_id: row.action_id.as_str().into(),
+                    target: row.target.as_str().into(),
+                    state: row.state.as_str().into(),
+                    deadline: row.deadline.as_str().into(),
+                    badge: row.badge.as_str().into(),
+                    restorable: row.restorable,
+                    accessible: row.accessible.as_str().into(),
+                })
+                .collect();
+            ui.set_action_rows(std::rc::Rc::new(slint::VecModel::from(model)).into());
+            ui.set_actions_note(note.into());
+        }
+        Err(reason) => {
+            ui.set_action_rows(
+                std::rc::Rc::new(slint::VecModel::from(Vec::<ActionRow>::new())).into(),
+            );
+            ui.set_actions_note(format!("Action records unavailable: {reason}").into());
+        }
+    }
+}
+
+/// One-shot RestoreAction / DisableActions request (RS-013 controls).
+#[cfg(windows)]
+fn run_policy_command(
+    pipe_name: &str,
+    command: &str,
+    payload: Option<serde_json::Value>,
+    request_id: &str,
+) -> Result<serde_json::Value, String> {
+    use ramshaper_core::ipc::{RequestEnvelope, PROTOCOL_VERSION};
+    use ramshaper_windows::pipe::{client_connect, read_frame, write_frame};
+
+    let client =
+        client_connect(pipe_name).map_err(|error| format!("agent not reachable ({error})"))?;
+    let envelope = RequestEnvelope {
+        protocol_version: PROTOCOL_VERSION,
+        request_id: request_id.to_string(),
+        agent_instance_id: None,
+        command: command.to_string(),
+        payload,
+    };
+    let payload_bytes =
+        serde_json::to_vec(&envelope).map_err(|error| format!("encode failed: {error}"))?;
+    write_frame(&client, &payload_bytes).map_err(|error| format!("write failed: {error}"))?;
+    let frame = read_frame(&client).map_err(|error| format!("read failed: {error}"))?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&frame).map_err(|error| format!("malformed response: {error}"))?;
+    if value["ok"] == true {
+        Ok(value["data"].clone())
+    } else {
+        let code = value["error"]["code"].as_str().unwrap_or("unknown");
+        let message = value["error"]["message"].as_str().unwrap_or("");
+        Err(format!("{code}: {message}"))
+    }
+}
+
+#[cfg(windows)]
+fn run_restore(pipe_name: &str, action_id: &str) -> Result<serde_json::Value, String> {
+    use ramshaper_core::ipc::{RestoreActionRequest, COMMAND_RESTORE_ACTION};
+    run_policy_command(
+        pipe_name,
+        COMMAND_RESTORE_ACTION,
+        Some(
+            serde_json::to_value(RestoreActionRequest {
+                action_id: action_id.to_string(),
+            })
+            .map_err(|error| format!("encode failed: {error}"))?,
+        ),
+        "ui-restore",
+    )
+}
+
+#[cfg(windows)]
+fn run_disable(pipe_name: &str) -> Result<serde_json::Value, String> {
+    use ramshaper_core::ipc::{DisableActionsRequest, COMMAND_DISABLE_ACTIONS};
+    run_policy_command(
+        pipe_name,
+        COMMAND_DISABLE_ACTIONS,
+        Some(
+            serde_json::to_value(DisableActionsRequest {})
+                .map_err(|error| format!("encode failed: {error}"))?,
+        ),
+        "ui-disable",
+    )
+}
+
+/// Render a control outcome in the note (never a silent no-op; an agent
+/// without the policy gate answers Unsupported and that is shown verbatim).
+#[cfg(windows)]
+fn apply_action_command_result(
+    app: &AppWindow,
+    control: &str,
+    result: Result<serde_json::Value, String>,
+) {
+    let ui = app.global::<UiState<'_>>();
+    let note = match result {
+        Ok(data) => format!(
+            "{control} result: {}",
+            serde_json::to_string(&data).unwrap_or_else(|_| "ok".to_string())
+        ),
+        Err(reason) => format!("{control} refused: {reason}"),
+    };
+    ui.set_actions_note(note.into());
+}
+
 #[cfg(windows)]
 fn fetch_processes(pipe_name: &str) -> Result<serde_json::Value, String> {
     use ramshaper_core::ipc::{RequestEnvelope, COMMAND_GET_PROCESSES, PROTOCOL_VERSION};
@@ -1183,6 +1464,51 @@ mod tests {
         assert!(display.phys_available.starts_with(char::is_numeric));
         assert!(display.pressure_missing.is_empty());
         assert!(display.pressure_evidence.contains("pressure_v1"));
+    }
+
+    #[test]
+    fn actions_rows_mark_pending_and_history_and_restore_scope() {
+        let data: serde_json::Value = serde_json::from_str(
+            r#"{"actions":[
+                {"action_id":"act-1","state":"Applied","target_name":"leaf.exe",
+                 "applied_deadline_unix_ms":999999999999999,"unresolved":true},
+                {"action_id":"act-2","state":"Conflict","target_name":"other.exe",
+                 "applied_deadline_unix_ms":1,"unresolved":true},
+                {"action_id":"act-3","state":"Restored","target_name":"old.exe",
+                 "applied_deadline_unix_ms":1,"unresolved":false}
+            ]}"#,
+        )
+        .expect("payload");
+        let rows = actions_rows_from(&data);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].badge, "pending");
+        assert!(rows[0].restorable, "an Applied pending row is restorable");
+        assert!(
+            rows[0].deadline.starts_with("expires in"),
+            "future deadline renders as time left: {}",
+            rows[0].deadline
+        );
+        assert_eq!(rows[1].state, "Conflict");
+        assert!(
+            !rows[1].restorable,
+            "a Conflict is preserved, not restorable over"
+        );
+        assert_eq!(rows[1].deadline, "expired");
+        assert_eq!(rows[2].badge, "history");
+        assert!(!rows[2].restorable);
+        assert!(
+            rows.iter().all(|r| r.accessible.contains("state")),
+            "every row announces its state as text (no color-only info)"
+        );
+    }
+
+    #[test]
+    fn actions_rows_of_an_empty_stub_render_nothing() {
+        let data: serde_json::Value =
+            serde_json::from_str(r#"{"actions":[],"note":"no policy actions exist"}"#)
+                .expect("payload");
+        let rows = actions_rows_from(&data);
+        assert!(rows.is_empty());
     }
 
     #[test]

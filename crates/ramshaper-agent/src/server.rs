@@ -135,12 +135,33 @@ pub struct AgentHandle {
     canceller: Arc<Mutex<Option<ramshaper_windows::handle::OwnedHandle>>>,
     pub pipe_name: String,
     pub instance_id: String,
+    /// The policy gate when the agent was started with one. Held so
+    /// `stop` can run the contract's clean-exit trigger (restore
+    /// everything outstanding) before the workers shut down.
+    policy: Option<Arc<crate::policy::PolicyGate>>,
 }
 
 impl AgentHandle {
     /// Signal stop, cancel any blocked accept call, and join the accept
-    /// loop and collector threads.
+    /// loop and collector threads. With a policy gate present, a **clean
+    /// agent exit initiates restoration first** (contract 14 §6): the
+    /// gate is disabled (no new applies), every outstanding record
+    /// restores through the engine, and the counts are reported — while
+    /// the pipe is still serving, so clients observe the disable.
     pub fn stop(self) {
+        if let Some(gate) = &self.policy {
+            let now = ramshaper_core::SystemClock.unix_epoch_ms();
+            let outcome = gate.disable(&ramshaper_core::ipc::DisableActionsRequest {}, now);
+            match outcome {
+                crate::policy::ResponseData::Ok(summary) => eprintln!(
+                    "clean-exit restoration: disabled; restored={}, unresolved={}",
+                    summary["restored"], summary["unresolved"]
+                ),
+                crate::policy::ResponseData::Err { code, message, .. } => {
+                    eprintln!("clean-exit restoration failed: {code:?}: {message}")
+                }
+            }
+        }
         self.stop.trigger();
         if let Ok(mut slot) = self.canceller.lock() {
             if let Some(thread) = slot.take() {
@@ -399,6 +420,7 @@ pub fn serve(
         canceller,
         pipe_name,
         instance_id,
+        policy,
     })
 }
 

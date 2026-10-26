@@ -263,6 +263,24 @@ impl JournalStore {
         Ok(Recorded::Created)
     }
 
+    /// The most recent records of any state, newest first (read-only
+    /// serving for `ListActions`): unresolved records are not duplicated
+    /// here by the caller's merge — this query is the history window.
+    pub fn recent(&self, limit: usize) -> Result<Vec<JournalRecord>, JournalError> {
+        let conn = self.conn.lock().expect("journal lock");
+        let mut stmt = conn
+            .prepare(
+                "SELECT * FROM actions ORDER BY created_at_unix_ms DESC, action_id DESC LIMIT ?1",
+            )
+            .map_err(|e| JournalError::classify(&e))?;
+        let rows = stmt
+            .query_map(rusqlite::params![limit as i64], row_to_record)
+            .map_err(|e| JournalError::classify(&e))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| JournalError::classify(&e))?;
+        Ok(rows)
+    }
+
     /// Pin the observed original value on a `Prepared` record (read-side
     /// pinning): the coordinator reads the current value through the
     /// validated handle before the write and persists what it saw —

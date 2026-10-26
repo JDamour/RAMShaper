@@ -36,6 +36,16 @@ export struct ProcessRow {
     accessible: string,
 }
 
+export struct ActionRow {
+    action-id: string,
+    target: string,
+    state: string,
+    deadline: string,
+    badge: string,
+    restorable: bool,
+    accessible: string,
+}
+
 // Shared column metrics so the header and the rows stay aligned.
 export global TableMetrics {
     out property <length> pid-w: 64px;
@@ -83,6 +93,14 @@ export global UiState {
     in-out property <string> config-note: "Waiting for the agent…";
     // Mirror of the Rust-side sort key, for the active button state.
     in-out property <string> process-sort: "working-set";
+    // Actions page (RS-013): the journal's history/pending/conflict records
+    // from ListActions. Controls wire to RestoreAction/DisableActions; an
+    // agent without the policy gate answers Unsupported and the page says
+    // so — never a silent no-op.
+    in-out property <[ActionRow]> action-rows;
+    in-out property <string> actions-note: "Waiting for the agent…";
+    callback restore-action(string);
+    callback disable-actions();
     callback navigate(string);
     callback sort-by(string);
     callback quit();
@@ -386,6 +404,109 @@ component ProfilesPage inherits Rectangle {
     }
 }
 
+// RS-013 Actions page: the action journal's records — pending, conflict
+// and history — with restore/disable controls. Every row carries its state
+// as text; nothing is color-only. An agent without the policy gate answers
+// Unsupported for the controls and the note explains it.
+component ActionRowDelegate inherits Rectangle {
+    in property <ActionRow> entry;
+    height: 34px;
+    HorizontalLayout {
+        spacing: 8px;
+        Text {
+            text: root.entry.action-id;
+            color: Palette.text-primary;
+            font-size: 12px;
+            width: 150px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            text: root.entry.target;
+            color: Palette.text-primary;
+            font-size: 12px;
+            width: 150px;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            text: root.entry.state;
+            color: Palette.text-primary;
+            font-size: 12px;
+            width: 130px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.entry.deadline;
+            color: Palette.text-secondary;
+            font-size: 12px;
+            horizontal-stretch: 1;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            text: root.entry.badge;
+            color: Palette.text-secondary;
+            font-size: 11px;
+            width: 90px;
+            vertical-alignment: center;
+        }
+        PaletteButton {
+            label: "Restore";
+            active: false;
+            visible: root.entry.restorable;
+            clicked => { UiState.restore-action(root.entry.action-id); }
+        }
+    }
+    accessible-role: text;
+    accessible-label: root.entry.accessible;
+}
+
+component ActionsPage inherits Rectangle {
+    VerticalLayout {
+        spacing: 10px;
+        HorizontalLayout {
+            spacing: 10px;
+            Text {
+                text: UiState.actions-note;
+                color: Palette.text-secondary;
+                font-size: 12px;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                wrap: word-wrap;
+                accessible-role: text;
+                accessible-label: "Actions status: " + UiState.actions-note;
+            }
+            PaletteButton {
+                label: "Disable all + restore";
+                active: false;
+                clicked => { UiState.disable-actions(); }
+            }
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            border-radius: 8px;
+            background: Palette.card-background;
+            border-width: 1px;
+            border-color: #E3EAF3;
+            clip: true;
+            ListView {
+                for entry in UiState.action-rows: ActionRowDelegate {
+                    entry: entry;
+                }
+            }
+            accessible-role: table;
+            accessible-label: "Action records: pending, conflict and history";
+        }
+        Text {
+            text: "Actions exist only when an explicit policy session is enabled; agents start Observe Only and a restart restores every outstanding record before serving. An agent without the policy gate answers 'unsupported' for the controls — the page says so instead of pretending.";
+            color: Palette.text-secondary;
+            font-size: 11px;
+            wrap: word-wrap;
+        }
+    }
+}
+
 export component AppWindow inherits Window {
     title: "RAMShaper";
     min-width: 1024px;
@@ -441,8 +562,15 @@ export component AppWindow inherits Window {
                         UiState.navigate("profiles");
                     }
                 }
-                // Managed App Groups, Insights and the Actions Log arrive
-                // with their gated slices and are hidden in this build.
+                NavItem {
+                    label: "Actions";
+                    active: UiState.current-page == "actions";
+                    clicked => {
+                        UiState.navigate("actions");
+                    }
+                }
+                // Managed App Groups and Insights arrive with their gated
+                // slices and are hidden in this build.
                 Rectangle { vertical-stretch: 1; }
                 Rectangle {
                     height: 34px;
@@ -617,6 +745,7 @@ export component AppWindow inherits Window {
             if UiState.current-page == "profiles": ProfilesPage {
                 vertical-stretch: 1;
             }
+            if UiState.current-page == "actions": ActionsPage { }
         }
     }
 }

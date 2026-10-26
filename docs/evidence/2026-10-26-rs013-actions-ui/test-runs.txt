@@ -1,0 +1,12 @@
+# RS-013: Actions UI + ListActions — test runs (2026-10-26)
+
+## agent: dispatch ListActions (real journal records when the gate exists; stub without)
+test dispatch::tests::capabilities_and_list_actions_succeed ... ok
+test dispatch::policy_dispatch_tests::list_actions_serves_journal_records_when_the_gate_exists ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 23 filtered out; finished in 0.01s
+
+## agent: full lib suite
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+## ui: row-model tests (pending/history badge, restore scope, deadline text, accessible labels)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

@@ -46,6 +46,7 @@ enum Command {
     Serve {
         pipe_name: Option<String>,
         interval_ms: Option<u64>,
+        policy_journal: Option<std::path::PathBuf>,
     },
     Probe {
         pipe_name: Option<String>,
@@ -70,6 +71,7 @@ fn parse(args: Vec<std::ffi::OsString>) -> Parsed {
     let mut subscribe_secs: Option<u64> = None;
     let mut request: Option<String> = None;
     let mut config: Option<std::path::PathBuf> = None;
+    let mut policy_journal: Option<std::path::PathBuf> = None;
 
     while let Some(arg) = iter.next() {
         let text = arg.to_string_lossy();
@@ -103,6 +105,10 @@ fn parse(args: Vec<std::ffi::OsString>) -> Parsed {
                 Some(value) => config = Some(std::path::PathBuf::from(value)),
                 None => return Parsed::UsageError("--config requires a path".into()),
             },
+            "--policy-journal" => match iter.next() {
+                Some(value) => policy_journal = Some(std::path::PathBuf::from(value)),
+                None => return Parsed::UsageError("--policy-journal requires a path".into()),
+            },
             "serve" if command.is_none() => command = Some("serve"),
             "probe" if command.is_none() => command = Some("probe"),
             other => {
@@ -123,6 +129,7 @@ fn parse(args: Vec<std::ffi::OsString>) -> Parsed {
             Command::Serve {
                 pipe_name,
                 interval_ms,
+                policy_journal,
             },
             config,
         ),
@@ -194,9 +201,10 @@ fn run(command: Command, config_path: Option<std::path::PathBuf>) -> ExitCode {
         Command::Serve {
             pipe_name,
             interval_ms,
+            policy_journal,
         } => {
             #[cfg(windows)]
-            return serve_command(pipe_name, interval_ms, config);
+            return serve_command(pipe_name, interval_ms, policy_journal, config);
             #[cfg(not(windows))]
             {
                 let _ = (pipe_name, interval_ms, config);
@@ -225,9 +233,33 @@ fn run(command: Command, config_path: Option<std::path::PathBuf>) -> ExitCode {
 fn serve_command(
     pipe_name: Option<String>,
     interval_ms: Option<u64>,
+    policy_journal: Option<std::path::PathBuf>,
     config: ramshaper_core::CoreConfig,
 ) -> ExitCode {
     use ramshaper_core::watch::WaitHandle as _;
+
+    // The policy stage is opt-in by explicit journal path: no path, no
+    // gate — the agent stays the read-only observer. The gate starts
+    // DISABLED (contract 14 §5: startup is Observe Only); enabling is the
+    // typed console consent below, never a flag, file or IPC command.
+    let policy = match policy_journal {
+        None => None,
+        Some(path) => {
+            match ramshaper_agent::consent::open_session_gate(
+                &path,
+                config.exclusions.processes.clone(),
+            ) {
+                Ok(gate) => Some(std::sync::Arc::new(gate)),
+                Err(error) => {
+                    eprintln!(
+                        "error: cannot open the policy journal at {}: {error}",
+                        path.display()
+                    );
+                    return ExitCode::from(1);
+                }
+            }
+        }
+    };
 
     let name = match pipe_name.or_else(|| config.agent.pipe_name.clone()) {
         Some(name) => normalize_pipe_name(&name),
@@ -277,10 +309,38 @@ fn serve_command(
         name,
         watch_config,
         config_summary,
-        None,
+        policy.clone(),
     ) {
         Ok(handle) => {
             eprintln!("agent {} listening; collector running", handle.instance_id);
+            // The consent act (contract 14 §5): the operator types the
+            // exact word on the agent console. Nothing else — not a flag,
+            // a profile, a reconnect or an IPC command — may enable the
+            // session. End of input is a decline, never a guess.
+            if let Some(gate) = &policy {
+                eprintln!(
+                    "policy stage present (journal-backed, restore loop active); the session is Observe Only"
+                );
+                eprintln!(
+                    "type {} on this console to allow confirmed CPU-priority actions for THIS session (anything else keeps Observe Only)",
+                    ramshaper_agent::consent::CONSENT_WORD,
+                );
+                let mut line = String::new();
+                let read = std::io::stdin().read_line(&mut line);
+                let consented = match read {
+                    Ok(0) => ramshaper_agent::consent::decide(None),
+                    Ok(_) => ramshaper_agent::consent::decide(Some(&line)),
+                    Err(_) => false,
+                };
+                if consented {
+                    gate.enable();
+                    eprintln!(
+                        "policy session enabled (this session only; DisableActions or stopping the agent restores everything outstanding)"
+                    );
+                } else {
+                    eprintln!("no consent given; the session stays Observe Only");
+                }
+            }
             // serve() returns immediately; block until stop, then join the
             // accept loop and collector for an orderly shutdown.
             wait_for_stop(&stop);
@@ -434,7 +494,8 @@ mod tests {
             Parsed::Run(
                 Command::Serve {
                     pipe_name: None,
-                    interval_ms: None
+                    interval_ms: None,
+                    policy_journal: None,
                 },
                 None
             )
@@ -451,6 +512,7 @@ mod tests {
                 Command::Serve {
                     pipe_name: Some(r"\\.\pipe\x".to_string()),
                     interval_ms: Some(500),
+                    policy_journal: None,
                 },
                 None
             )
@@ -490,6 +552,44 @@ mod tests {
             parse(os_args(&["--pipe-name"])),
             Parsed::UsageError(_)
         ));
+        assert!(matches!(
+            parse(os_args(&["serve", "--policy-journal"])),
+            Parsed::UsageError(_)
+        ));
+    }
+
+    #[test]
+    fn policy_journal_flag_selects_the_policy_stage() {
+        // The explicit journal path is the only way to start with the
+        // policy gate; there is no default location and no bare --policy
+        // flag (contract 14 §5: nothing but the typed console consent
+        // enables the session).
+        assert_eq!(
+            parse(os_args(&[
+                "serve",
+                "--policy-journal",
+                r"C:\data\policy.sqlite3"
+            ])),
+            Parsed::Run(
+                Command::Serve {
+                    pipe_name: None,
+                    interval_ms: None,
+                    policy_journal: Some(std::path::PathBuf::from(r"C:\data\policy.sqlite3")),
+                },
+                None
+            )
+        );
+        assert_eq!(
+            parse(os_args(&["serve"])),
+            Parsed::Run(
+                Command::Serve {
+                    pipe_name: None,
+                    interval_ms: None,
+                    policy_journal: None,
+                },
+                None
+            )
+        );
     }
 
     #[test]
