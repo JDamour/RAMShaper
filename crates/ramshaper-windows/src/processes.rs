@@ -225,6 +225,24 @@ pub fn scan_processes() -> ProcessScan {
     }
 }
 
+/// `(pid, parent_pid)` pairs from one Toolhelp snapshot (R-03 children
+/// observation). Names are dropped here; a name is a label, never identity.
+pub fn enumerate_pid_parents() -> Result<Vec<(u32, u32)>, QueryFailure> {
+    Ok(enumerate_pids()?
+        .into_iter()
+        .map(|(pid, _name, parent)| (pid, parent))
+        .collect())
+}
+
+/// First PID whose image name matches, case-insensitive (label lookup for
+/// tests and tooling — never identity or authority).
+pub fn pid_of_image(image_name: &str) -> Option<u32> {
+    enumerate_pids()
+        .ok()?
+        .into_iter()
+        .find_map(|(pid, name, _)| name.eq_ignore_ascii_case(image_name).then_some(pid))
+}
+
 /// The current process's own `(working_set, private_commit)` bytes, for
 /// observer-overhead reporting. `None` if the query fails (never invented).
 pub fn current_process_memory_bytes() -> Option<(u64, u64)> {

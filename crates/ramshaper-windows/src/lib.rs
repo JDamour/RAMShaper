@@ -10,6 +10,8 @@
 //! - [`identity`] — process identity via PID + exact creation FILETIME
 //!   (`OpenProcess` with `PROCESS_QUERY_LIMITED_INFORMATION`, `GetProcessTimes`).
 //! - [`console`] — Ctrl+C cancellation event (`SetConsoleCtrlHandler`).
+//! - [`eligibility`] — eligibility signal-source adapters (R-03): owner/session,
+//!   foreground, priority class, children, capability probe, classification.
 //! - [`osinfo`] — OS/build metadata (`RtlGetVersion`, registry, `GetNativeSystemInfo`).
 //! - [`monitor`] — read-only adapter implementing the platform contracts.
 //!
@@ -18,6 +20,7 @@
 //! denied, process exit) mapped to typed `QueryFailure`s, never panics.
 
 pub mod console;
+pub mod eligibility;
 pub mod error;
 pub mod event;
 pub mod fs;

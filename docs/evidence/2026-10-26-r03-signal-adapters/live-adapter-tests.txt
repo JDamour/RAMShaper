@@ -1,0 +1,46 @@
+# R-03 OS signal-source adapters — live test run (2026-10-26)
+
+Host: MINGW64_NT-10.0-26300 x86_64, Microsoft Windows [Version 10.0.26300.9711]
+User context: standard user (documented validation environment)
+Command: cargo test -p ramshaper-windows eligibility -- --nocapture --test-threads=1
+
+   Compiling ramshaper-windows v0.1.0 (F:\_RAMShaper\crates\ramshaper-windows)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.33s
+     Running unittests src\lib.rs (target\debug\deps\ramshaper_windows-d82341b6eac6c48c.exe)
+
+running 13 tests
+test eligibility::tests::capability_is_unsupported_for_system_service_process_on_standard_user ... ok
+test eligibility::tests::capability_of_own_process_is_supported ... ok
+test eligibility::tests::capability_of_unresolvable_pid_is_unknown ... unresolvable-PID capability probe unknown: target process exited or PID not found (Win32 code 87)
+ok
+test eligibility::tests::children_of_current_process_include_the_spawned_child ... 
+Pinging 127.0.0.1 with 32 bytes of data:
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+ok
+test eligibility::tests::children_of_unresolvable_pid_is_unknown ... ok
+test eligibility::tests::classification_covers_self_identification_only ... ok
+test eligibility::tests::focus_of_windowless_test_process_is_never_foreground ... ok
+test eligibility::tests::last_error_helper_preserves_code ... ok
+test eligibility::tests::owner_session_of_current_process_is_current_user_session ... ok
+test eligibility::tests::owner_session_of_system_process_is_unknown_or_different_never_current ... standard user cannot read services.exe token: access denied
+ok
+test eligibility::tests::owner_session_of_unresolvable_pid_is_unknown ... unresolvable-PID owner observation unknown: target process exited or PID not found (Win32 code 87)
+ok
+test eligibility::tests::priority_class_of_fresh_child_is_normal ... ok
+test eligibility::tests::priority_class_of_unresolvable_pid_is_unknown ... unresolvable-PID class read unknown: target process exited or PID not found (Win32 code 87)
+ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.09s
+
+     Running tests\integration.rs (target\debug\deps\integration-0e7a92cc3ffc9f3d.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+     Running tests\pipe_probe.rs (target\debug\deps\pipe_probe-e68924df8b12289e.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+

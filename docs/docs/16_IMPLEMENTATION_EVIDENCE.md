@@ -1303,3 +1303,97 @@ author: fold anything worth keeping into `policy.rs` (its
 reference are the notable differences worth reconciling), then delete the
 file. The `271 passed` gate claim in 9e0bdaf covers everything compiled
 at gate time; dryrun.rs was not (and is not) part of any build.
+
+---
+
+# R-03 — eligibility OS signal-source adapters, 2026-10-26
+
+**Scope implemented:** the tested OS signal side of the eligibility contract
+(ADR-028's deliberately-out-of-scope item; readiness risk R-03's "tested OS
+signal sources"): new `ramshaper-windows::eligibility` module, one adapter
+per observation the RS-015 matrix consumes. All read-only — nothing here
+writes a process setting; the capability probe opens a
+`PROCESS_SET_INFORMATION` handle and closes it without writing.
+
+- `observe_owner_session(pid)` — target user SID (process token,
+  `TOKEN_QUERY`) vs current user SID, plus both logon session ids; any
+  failure (exit `exited_87`, `access denied`, OS error) is `Unknown`.
+- `observe_focus(pid)` — `GetForegroundWindow` +
+  `GetWindowThreadProcessId`, compared to the target PID; fresh by
+  construction (`observed_age_ms = 0`; staleness is decided in core).
+  No interactive desktop (null foreground) is `Unknown`, never "not
+  foreground".
+- `observe_priority_class(pid)` — `GetPriorityClass` through a
+  `PROCESS_QUERY_LIMITED_INFORMATION` handle; all six documented class
+  constants mapped by name, unknown values reported verbatim, zero read
+  is `Unknown` with the preserved error.
+- `observe_children(pid)` — direct live children counted from one
+  Toolhelp snapshot (`enumerate_pid_parents` added to `processes`); a
+  snapshot failure is `Unknown`, never a silent zero (R-10).
+- `probe_priority_capability(pid)` — `OpenProcess(PROCESS_SET_INFORMATION)`:
+  success = `Supported` (handle closed, no write), `ACCESS_DENIED` =
+  `Unsupported` (the tested cannot-change signal), exit/OS error =
+  `Unknown`.
+- `classify_target(...)` — deliberately narrow (doc 04: no universal
+  detection): self-identification only — target PID equal to RAMShaper's
+  own PID or image name equal to one of RAMShaper's own well-known binary
+  names (case-insensitive) is `protected_ramshaper`; **every third-party
+  target is `Unknown` (deny)** until RS-024 Stage B adds tested coverage.
+  No denylist of other software exists or is claimed.
+
+**Fixture note (defect found during testing, fixed):** the first version of
+the unknown-state tests spawned a child, waited for exit and polled until
+the PID stopped resolving — it never did within 5 s because **Windows
+reuses exited PIDs within seconds**; the poll was measuring a new owner of
+the recycled PID. Replaced with an honest deterministic fixture: an unused
+high PID that `resolve_identity` reports as unresolvable (`ERROR_INVALID_PARAMETER`),
+which is exactly the documented post-exit state the adapters must map to
+`Unknown` (QueryFailure::Exited covers "target process exited or the PID
+no longer resolves").
+
+**Live results (13 tests, evidence in
+[../evidence/2026-10-26-r03-signal-adapters/live-adapter-tests.txt](../evidence/2026-10-26-r03-signal-adapters/live-adapter-tests.txt)):**
+own process owner/session = `CurrentUserSession`; unresolvable-PID
+observations all `Unknown` with `exited_87`; `services.exe` token query =
+`access denied` → owner `Unknown` and capability `Unsupported` on this
+standard-user environment; focus of the windowless test process observed
+background (never foreground); fresh `ping` child = `Normal` priority and
+counted as a live child; self-classification covers PID/name
+self-identification only.
+
+**Workspace gates (2026-10-26):** fmt clean; clippy `--workspace
+--all-targets --locked -D warnings` clean; `cargo check --workspace
+--all-targets --locked` clean; `cargo test --workspace --locked` **284
+passed, 0 failed** (271 + 13); release build
+`cargo build --release --target x86_64-pc-windows-msvc --locked` clean
+(the AT-06 soak watcher no longer holds `ramshaper-cli.exe` — see the
+AT-06 note below).
+
+**Not in this slice (recorded, not hidden):** the RS-024 Stage B tested
+workload matrix (what populates the compatibility allowlist — requires
+cohort-rig workload testing); wiring these adapters into the agent's
+`PreviewAction` flow (RS-016); per-identity cooldown/stale trip (RS-018).
+The classification adapter makes no claim beyond self-identification:
+protected-category detection (audio/security/accessibility/installer/game)
+has no tested signal source yet and stays `Unknown`-denies by design.
+
+**Environment:** Windows 11 build 26200.9711, standard user, Rust 1.93.1,
+windows-rs 0.62.2 (no new dependencies; no new feature flags —
+`Win32_UI_WindowsAndMessaging`/`Win32_System_Threading` were already
+pinned).
+
+---
+
+# AT-06 soak — attempt 3 outcome: early stop, 2026-10-26
+
+Observed at 2026-10-26T07:59Z (17 min after the planned
+2026-10-26T07:42Z end): no `ramshaper-cli` process remains, and
+`target/soak/watch.jsonl`'s last sample is **seq 245 at
+2026-10-25T11:46:13Z** — attempt 3 stopped after ~4 h 04 min of its
+planned 24 h, consistent with the overnight shutdown/sleep pattern that
+ended attempts 1 and 2 (nothing was written after 11:46Z; the wrapper was
+verified alive before that point). 245 samples at 60 s cadence, no
+low-memory signal. This record is factual only: the 24-hour completion
+criterion (C3) was not met on this rig, and the relaunch-vs-fold decision
+stays with the owner as previously recorded. No verdict was recorded and
+no process was killed.

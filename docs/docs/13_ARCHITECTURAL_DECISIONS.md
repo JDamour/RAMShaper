@@ -375,3 +375,45 @@ before any actuator is enabled.
 **Consequences:** RS-016 gets a validated decision core to wire
 `PreviewAction`/`ConfirmAction` onto, and the future `policies --dry-run`
 CLI has its engine with 20 tests before any UI or actuation exists.
+
+## ADR-030: Eligibility signal adapters — minimal tested signals, unknown-mapped, self-only classification — Accepted (implemented 2026-10-26; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+
+**Context:** R-03's open item after RS-015 (ADR-028): the OS signal sources
+that feed the eligibility matrix — foreground, owner/session, priority
+class, children, capability and classification — must exist and be tested
+before RS-016 can wire `PreviewAction` (contract 14 §5; doc 04's rule that
+the gate may not be replaced by an executable-name denylist).
+
+**Decisions:**
+- Adapters live in `ramshaper-windows::eligibility`, one per observation
+  type, and return the core observation enums directly — the crate
+  boundary stays "OS calls here, decisions in core"; adapters cannot
+  invent facts, only observe or fail.
+- **Every failure maps to `Unknown`, never a guess**: exit
+  (`ERROR_INVALID_PARAMETER`), access denial and OS errors become the
+  observation's `Unknown` variant (which always denies downstream). No
+  foreground window on a non-interactive desktop is `Unknown`, not
+  "not foreground"; a failed child snapshot is `Unknown`, not zero.
+- **Capability probing reads nothing it writes**: the
+  `PROCESS_SET_INFORMATION` open is the tested capability signal
+  (`ACCESS_DENIED` = `Unsupported`); the handle is closed without any
+  write, keeping the whole module read-only.
+- **Classification coverage is self-identification only**: RAMShaper's own
+  PID and its own well-known image names classify as
+  `protected_ramshaper`; every third-party target is `Unknown` (deny)
+  until the RS-024 Stage B tested signal matrix covers it. This is the
+  honest reading of doc 04 — no universal detection is claimed, and no
+  denylist of other software is introduced.
+- Unknown-state tests use an **unused high PID as the fixture** instead of
+  a freshly exited child: Windows reuses exited PIDs within seconds, so
+  the original poll-until-retired test was measuring a recycled PID (found
+  during this slice and recorded in doc 16). An unresolvable PID is the
+  documented `Exited` state, deterministically.
+
+**Consequences:** RS-016's coordinator can collect every eligibility input
+from tested, read-only adapters, and the "unknown denies" property now
+holds end to end — from the OS call through the deny reason. The allowlist
+still ships empty: compatibility evidence (RS-024 Stage B) remains the
+gate before any target can become eligible, and protected-category
+detection beyond self-identification has no signal source yet — by
+recorded design, not omission.
