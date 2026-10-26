@@ -482,16 +482,20 @@ impl ramshaper_core::coordinator::ActionJournal for JournalStore {
         }
     }
 
-    fn record_state(
+    fn record_snapshot(
         &self,
         action_id: &str,
     ) -> Result<
-        Option<(ramshaper_core::journal::ActionState, Option<u64>)>,
+        Option<ramshaper_core::coordinator::JournalSnapshot>,
         ramshaper_core::coordinator::JournalFault,
     > {
-        Ok(Self::get(self, action_id)
-            .map_err(fault_of)?
-            .map(|record| (record.state, record.applied_deadline_unix_ms)))
+        Ok(Self::get(self, action_id).map_err(fault_of)?.map(|record| {
+            ramshaper_core::coordinator::JournalSnapshot {
+                state: record.state,
+                applied_deadline_unix_ms: record.applied_deadline_unix_ms,
+                intent: Some(record.intent),
+            }
+        }))
     }
 
     fn transition(
@@ -594,4 +598,3 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> Result<JournalRecord, rusqlite::Err
         evidence: serde_json::from_str(&evidence_json).unwrap_or(serde_json::Value::Null),
     })
 }
-

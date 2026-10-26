@@ -66,14 +66,12 @@ pub trait ActionJournal {
     /// # Errors
     /// [`JournalFault`] on storage failure (disk full, corrupt, quota…).
     fn record_prepared(&self, intent: &ActionIntent) -> Result<bool, JournalFault>;
-    /// Load a record's current state and applied deadline, if present.
+    /// Load a record's snapshot (state, applied deadline, original
+    /// intent), if present.
     ///
     /// # Errors
     /// [`JournalFault`] on storage failure.
-    fn record_state(
-        &self,
-        action_id: &str,
-    ) -> Result<Option<(ActionState, Option<u64>)>, JournalFault>;
+    fn record_snapshot(&self, action_id: &str) -> Result<Option<JournalSnapshot>, JournalFault>;
     /// Apply one guarded transition through the state machine.
     ///
     /// # Errors
@@ -87,6 +85,27 @@ pub trait ActionJournal {
     ) -> Result<ActionState, JournalFault>;
 }
 
+/// What the journal can tell about one record without mutating it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JournalSnapshot {
+    /// Current state-machine state.
+    pub state: ActionState,
+    /// Live deadline recorded at `ApplyVerified`.
+    pub applied_deadline_unix_ms: Option<u64>,
+    /// The durable intent (original/desired values and identity), when
+    /// stored.
+    pub intent: Option<ActionIntent>,
+}
+
+impl JournalSnapshot {
+    /// Whether the recorded deadline has passed (a restore trigger).
+    #[must_use]
+    pub fn ttl_expired(&self, now_unix_ms: u64) -> bool {
+        self.applied_deadline_unix_ms
+            .is_some_and(|deadline| deadline < now_unix_ms)
+    }
+}
+
 impl<J: ActionJournal + ?Sized> ActionJournal for std::rc::Rc<J> {
     fn available(&self) -> bool {
         (**self).available()
@@ -94,11 +113,8 @@ impl<J: ActionJournal + ?Sized> ActionJournal for std::rc::Rc<J> {
     fn record_prepared(&self, intent: &ActionIntent) -> Result<bool, JournalFault> {
         (**self).record_prepared(intent)
     }
-    fn record_state(
-        &self,
-        action_id: &str,
-    ) -> Result<Option<(ActionState, Option<u64>)>, JournalFault> {
-        (**self).record_state(action_id)
+    fn record_snapshot(&self, action_id: &str) -> Result<Option<JournalSnapshot>, JournalFault> {
+        (**self).record_snapshot(action_id)
     }
     fn transition(
         &self,
@@ -149,7 +165,22 @@ pub trait PriorityActuator {
         identity: &ProcessIdentity,
         desired: u32,
     ) -> Result<u32, ActuatorError>;
+
+    /// Read the current property value for the exact identity
+    /// (compare-before-restore). A mismatched identity is
+    /// [`ActuatorError::IdentityMismatch`]; a failed read is `OsFailure`
+    /// (transient, retriable) — the restore engine never assumes a value
+    /// it could not read.
+    ///
+    /// # Errors
+    /// [`ActuatorError`] as classified above.
+    fn read(&self, identity: &ProcessIdentity) -> Result<u32, ActuatorError>;
 }
+
+/// Native `ERROR_ACCESS_DENIED` — the immediate-attention restore case
+/// (contract 14 §6: "access denial needs attention immediately", no
+/// retries).
+pub const ERROR_ACCESS_DENIED: u32 = 5;
 
 /// A preview offered by [`Coordinator::preview`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,6 +245,8 @@ pub enum PreviewVerdict {
     JournalUnavailable,
     /// An action is already outstanding for this coordinator slot.
     ActionOutstanding,
+    /// The coordinator is disabled (RS-017): no new applies.
+    Disabled,
 }
 
 /// Confirm verdicts.
@@ -246,6 +279,8 @@ pub enum ConfirmOutcome {
     Uncertain(String),
     /// The identity changed between preview and confirm: nothing written.
     IdentityGone,
+    /// The coordinator is disabled (RS-017): no new applies.
+    Disabled,
 }
 
 /// The one-action coordinator slot (contract: one action at a time; the
@@ -256,15 +291,37 @@ pub struct Coordinator {
     rules: PolicyRules,
     /// The single pending preview, if any.
     pending: Option<PendingPreview>,
+    /// Set by [`Coordinator::disable`]: no new applies until
+    /// [`Self::enable`] (RS-017 restore-on-disable).
+    disabled: bool,
 }
 
 impl Coordinator {
+    /// Disable (RS-017 trigger): drop the pending preview and accept no
+    /// new applies until [`Self::enable`].
+    pub fn disable(&mut self) {
+        self.pending = None;
+        self.disabled = true;
+    }
+
+    /// Re-enable new applies after a disable.
+    pub fn enable(&mut self) {
+        self.disabled = false;
+    }
+
+    /// Whether applies are currently disabled.
+    #[must_use]
+    pub const fn is_disabled(&self) -> bool {
+        self.disabled
+    }
+
     /// A coordinator under the given rules.
     #[must_use]
     pub fn new(rules: PolicyRules) -> Self {
         Self {
             rules,
             pending: None,
+            disabled: false,
         }
     }
 
@@ -274,6 +331,9 @@ impl Coordinator {
         journal: &J,
         request: PreviewRequest<'_>,
     ) -> PreviewVerdict {
+        if self.disabled {
+            return PreviewVerdict::Disabled;
+        }
         if !journal.available() {
             return PreviewVerdict::JournalUnavailable;
         }
@@ -342,16 +402,23 @@ impl Coordinator {
         action_id: &str,
         now_unix_ms: u64,
     ) -> ConfirmOutcome {
+        if self.disabled {
+            return ConfirmOutcome::Disabled;
+        }
         // Replay first: an already-applied record returns the original
         // outcome without touching the actuator — regardless of whether a
         // preview is still pending (the slot frees on apply).
-        match journal.record_state(action_id) {
-            Ok(Some((ActionState::Applied, Some(deadline)))) => {
+        match journal.record_snapshot(action_id) {
+            Ok(Some(JournalSnapshot {
+                state: ActionState::Applied,
+                applied_deadline_unix_ms: Some(deadline),
+                ..
+            })) => {
                 return ConfirmOutcome::Replayed {
                     deadline_unix_ms: deadline,
                 };
             }
-            Ok(Some((state, _))) if state != ActionState::Prepared => {
+            Ok(Some(snapshot)) if snapshot.state != ActionState::Prepared => {
                 // A terminal/conflicting record with this ID: never reuse.
                 return ConfirmOutcome::UnknownPreview;
             }
@@ -463,6 +530,309 @@ impl Coordinator {
     }
 }
 
+/// Why restoration started (contract 14 §6: all of these initiate
+/// restoration; disable additionally stops new applies).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestoreTrigger {
+    /// Manual disable (also stops new applies via
+    /// [`Coordinator::disable`]).
+    Disable,
+    /// Consent expired or was revoked.
+    ConsentRevoked,
+    /// The target returned to the foreground.
+    ForegroundReturned,
+    /// The applied deadline passed.
+    TtlExpired,
+    /// A safety input went stale or contradicted the consent.
+    StaleSafetyInput,
+    /// The configuration revision changed under the action.
+    ConfigurationInvalidated,
+    /// The session was locked.
+    SessionLock,
+    /// The system is suspending.
+    Suspend,
+    /// An error invalidated the experiment.
+    Error,
+    /// The agent is exiting cleanly.
+    CleanExit,
+    /// Startup reconciliation found an unresolved record.
+    StartupRecovery,
+}
+
+impl RestoreTrigger {
+    /// Stable machine code for the journal evidence trail.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Disable => "disable",
+            Self::ConsentRevoked => "consent_revoked",
+            Self::ForegroundReturned => "foreground_returned",
+            Self::TtlExpired => "ttl_expired",
+            Self::StaleSafetyInput => "stale_safety_input",
+            Self::ConfigurationInvalidated => "configuration_invalidated",
+            Self::SessionLock => "session_lock",
+            Self::Suspend => "suspend",
+            Self::Error => "error",
+            Self::CleanExit => "clean_exit",
+            Self::StartupRecovery => "startup_recovery",
+        }
+    }
+}
+
+/// One restoration attempt's verdict.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RestoreOutcome {
+    /// The original value is back (written and verified, or already
+    /// current — `wrote_back` says which).
+    Restored { wrote_back: bool },
+    /// An external writer holds a third value: preserved, attention
+    /// required (pinned).
+    Conflict,
+    /// The identity no longer matches: zero writes, terminal.
+    TargetGone,
+    /// A transient failure: retry at the given absolute time.
+    RetryScheduled {
+        /// When the next attempt is allowed (Unix ms).
+        due_unix_ms: u64,
+    },
+    /// The bounded retries are exhausted: the record stays `RestorePending`
+    /// for manual retry (pinned).
+    ManualRetry,
+    /// Access denied (or another must-not-retry failure): attention now,
+    /// no retries.
+    NeedsAttention,
+    /// The record is not in a restorable state (missing, or already
+    /// terminal).
+    NotRestorable,
+    /// The journal refused a transition: recovery of the record still
+    /// proceeds independently, but this engine attempt stopped.
+    StorageBlocked(String),
+}
+
+/// Bounded restore retries (contract 14 §6): transient restore failures
+/// retry at 1 s, 5 s and 30 s, then the record stays `RestorePending` with
+/// manual retry. No busy retry loop.
+pub const RESTORE_RETRY_DELAYS_MS: [u64; 3] = [1_000, 5_000, 30_000];
+
+/// Drives restoration of journaled actions (RS-017). One engine per
+/// agent; tracks the bounded-retry state per action.
+#[derive(Debug, Default)]
+pub struct RestoreEngine {
+    /// Per-action retry bookkeeping: attempts so far and when the next
+    /// attempt is allowed.
+    retries: std::collections::HashMap<String, (u32, Option<u64>)>,
+}
+
+impl RestoreEngine {
+    /// Attempt restoration of one action now. Compare-before-restore: the
+    /// current value is read first and only a value equal to RAMShaper's
+    /// written `desired` is written back to the original — anything else is
+    /// preserved (`Conflict`) or terminal (`TargetGone`).
+    pub fn restore_once<J: ActionJournal, A: PriorityActuator>(
+        &mut self,
+        journal: &J,
+        actuator: &mut A,
+        identity: &ProcessIdentity,
+        action_id: &str,
+        trigger: RestoreTrigger,
+        now_unix_ms: u64,
+    ) -> RestoreOutcome {
+        // Load the record; only Applied / RestorePending are restorable.
+        let snapshot = match journal.record_snapshot(action_id) {
+            Ok(Some(snapshot)) => snapshot,
+            Ok(None) => return RestoreOutcome::NotRestorable,
+            Err(fault) => return RestoreOutcome::StorageBlocked(fault.to_string()),
+        };
+        if !matches!(
+            snapshot.state,
+            ActionState::Applied | ActionState::RestorePending
+        ) {
+            return RestoreOutcome::NotRestorable;
+        }
+        // First trigger on an Applied record: enter RestorePending (blocks
+        // new applies; the trigger is recorded via the state move).
+        if snapshot.state == ActionState::Applied {
+            if let Err(fault) = journal.transition(
+                action_id,
+                ActionState::Applied,
+                &Event::RestoreRequested,
+                now_unix_ms,
+            ) {
+                return RestoreOutcome::StorageBlocked(fault.to_string());
+            }
+        }
+        let _ = trigger; // carried by the caller's audit trail; the state
+                         // machine treats all triggers alike (contract).
+
+        // Bounded retry gate: a scheduled attempt that is not yet due is a
+        // no-op (no busy retry loop).
+        if let Some((_, Some(due))) = self.retries.get(action_id) {
+            if now_unix_ms < *due {
+                return RestoreOutcome::RetryScheduled { due_unix_ms: *due };
+            }
+        }
+
+        // The intent is required to know what "original" means.
+        let Some(intent) = snapshot.intent.clone() else {
+            return RestoreOutcome::StorageBlocked("record has no intent".to_string());
+        };
+        let Some(original) = intent.property.original else {
+            // The original was never readable: nothing safe to restore to;
+            // attention required (never inferred from defaults).
+            return RestoreOutcome::NeedsAttention;
+        };
+
+        // Compare-before-restore.
+        let current = match actuator.read(identity) {
+            Ok(value) => value,
+            Err(ActuatorError::IdentityMismatch) => {
+                return self.finish(
+                    journal,
+                    action_id,
+                    ActionState::RestorePending,
+                    &Event::TargetVanished,
+                    now_unix_ms,
+                    false,
+                );
+            }
+            Err(ActuatorError::OsFailure { code, .. }) if code == ERROR_ACCESS_DENIED => {
+                // Access denial needs attention immediately; no retries.
+                return RestoreOutcome::NeedsAttention;
+            }
+            Err(ActuatorError::UnknownOutcome) => {
+                return self.schedule_retry(action_id, now_unix_ms)
+            }
+            Err(_) => return self.schedule_retry(action_id, now_unix_ms),
+        };
+
+        match crate::journal::reconcile(
+            &intent,
+            &crate::journal::Observed {
+                identity_matches: true,
+                current: Some(current),
+            },
+        ) {
+            crate::journal::ReconcileDecision::WriteHappenedRestore => {
+                // The write is ours and live: put the original back.
+                match actuator.write_verified(identity, original) {
+                    Ok(read_back) if read_back == original => self.finish(
+                        journal,
+                        action_id,
+                        ActionState::RestorePending,
+                        &Event::RestoreVerified,
+                        now_unix_ms,
+                        true,
+                    ),
+                    Ok(_mismatch) => self.schedule_retry(action_id, now_unix_ms),
+                    Err(ActuatorError::IdentityMismatch) => self.finish(
+                        journal,
+                        action_id,
+                        ActionState::RestorePending,
+                        &Event::TargetVanished,
+                        now_unix_ms,
+                        false,
+                    ),
+                    Err(ActuatorError::OsFailure { code, .. }) if code == ERROR_ACCESS_DENIED => {
+                        RestoreOutcome::NeedsAttention
+                    }
+                    Err(_) => self.schedule_retry(action_id, now_unix_ms),
+                }
+            }
+            crate::journal::ReconcileDecision::NoWriteOccurred => {
+                // Already back to the original (process restarted its own
+                // class, or the write never landed): nothing to undo.
+                self.finish(
+                    journal,
+                    action_id,
+                    ActionState::RestorePending,
+                    &Event::RestoreVerified,
+                    now_unix_ms,
+                    false,
+                )
+            }
+            crate::journal::ReconcileDecision::ExternalConflict => self.finish(
+                journal,
+                action_id,
+                ActionState::RestorePending,
+                &Event::ExternalChange,
+                now_unix_ms,
+                false,
+            ),
+            crate::journal::ReconcileDecision::TargetGone => self.finish(
+                journal,
+                action_id,
+                ActionState::RestorePending,
+                &Event::TargetVanished,
+                now_unix_ms,
+                false,
+            ),
+            crate::journal::ReconcileDecision::Unreadable => {
+                self.schedule_retry(action_id, now_unix_ms)
+            }
+        }
+    }
+
+    /// Whether the action has a scheduled (not-yet-due) retry.
+    #[must_use]
+    pub fn pending_retry(&self, action_id: &str, now_unix_ms: u64) -> bool {
+        self.retries
+            .get(action_id)
+            .is_some_and(|(_, due)| due.is_some_and(|due| due > now_unix_ms))
+    }
+
+    /// Move to a terminal state, clear the retry bookkeeping, and map the
+    /// journal verdict to the outcome.
+    fn finish<J: ActionJournal>(
+        &mut self,
+        journal: &J,
+        action_id: &str,
+        expected: ActionState,
+        event: &Event,
+        now_unix_ms: u64,
+        wrote_back: bool,
+    ) -> RestoreOutcome {
+        self.retries.remove(action_id);
+        match journal.transition(action_id, expected, event, now_unix_ms) {
+            Ok(_) => match event {
+                Event::RestoreVerified => RestoreOutcome::Restored { wrote_back },
+                Event::ExternalChange => RestoreOutcome::Conflict,
+                Event::TargetVanished => RestoreOutcome::TargetGone,
+                _ => RestoreOutcome::NotRestorable,
+            },
+            Err(fault) => RestoreOutcome::StorageBlocked(fault.to_string()),
+        }
+    }
+
+    /// Record a transient failure and either schedule the next bounded
+    /// retry or exhaust the schedule.
+    fn schedule_retry(&mut self, action_id: &str, now_unix_ms: u64) -> RestoreOutcome {
+        let entry = self
+            .retries
+            .entry(action_id.to_string())
+            .or_insert((0, None));
+        entry.0 = entry.0.saturating_add(1);
+        match RESTORE_RETRY_DELAYS_MS.get((entry.0 - 1) as usize) {
+            Some(delay) => {
+                let due = now_unix_ms.saturating_add(*delay);
+                entry.1 = Some(due);
+                RestoreOutcome::RetryScheduled { due_unix_ms: due }
+            }
+            None => {
+                // Schedule exhausted: the record stays RestorePending
+                // (pinned) for manual retry.
+                entry.1 = None;
+                RestoreOutcome::ManualRetry
+            }
+        }
+    }
+}
+
+/// Terminal restore states, for the "never say all restored" rule.
+#[must_use]
+pub fn is_unresolved_state(state: ActionState, recovery_retained: bool) -> bool {
+    state.is_unresolved(recovery_retained)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,11 +932,20 @@ mod tests {
             records.push((intent.clone(), ActionState::Prepared, None));
             Ok(true)
         }
-        fn record_state(
+        fn record_snapshot(
             &self,
             action_id: &str,
-        ) -> Result<Option<(ActionState, Option<u64>)>, JournalFault> {
-            Ok(self.state_of(action_id))
+        ) -> Result<Option<JournalSnapshot>, JournalFault> {
+            Ok(self
+                .records
+                .borrow()
+                .iter()
+                .find(|(i, _, _)| i.action_id == action_id)
+                .map(|(intent, state, deadline)| JournalSnapshot {
+                    state: *state,
+                    applied_deadline_unix_ms: *deadline,
+                    intent: Some(intent.clone()),
+                }))
         }
         fn transition(
             &self,
@@ -606,6 +985,8 @@ mod tests {
         /// Scripted behavior of the next write.
         behavior: WriteBehavior,
         value: RefCell<u32>,
+        /// Scripted behavior of `read`.
+        read_behavior: ReadBehavior,
     }
 
     #[derive(Clone, Copy, PartialEq)]
@@ -617,6 +998,18 @@ mod tests {
         IdentityMismatch,
     }
 
+    #[derive(Clone, Copy, PartialEq)]
+    enum ReadBehavior {
+        /// Return the current `value`.
+        Value,
+        /// Access denied on read (immediate attention).
+        AccessDenied,
+        /// Transient read failure (retriable).
+        TransientFailure,
+        /// Identity gone on read.
+        Gone,
+    }
+
     impl FakeActuator {
         fn new(behavior: WriteBehavior) -> Self {
             Self {
@@ -624,6 +1017,7 @@ mod tests {
                 journal_at_write: None,
                 behavior,
                 value: RefCell::new(0x20),
+                read_behavior: ReadBehavior::Value,
             }
         }
 
@@ -660,6 +1054,22 @@ mod tests {
                 }),
                 WriteBehavior::UnknownOutcome => Err(ActuatorError::UnknownOutcome),
                 WriteBehavior::IdentityMismatch => Err(ActuatorError::IdentityMismatch),
+            }
+        }
+
+        fn read(&self, identity: &ProcessIdentity) -> Result<u32, ActuatorError> {
+            let _ = identity;
+            match self.read_behavior {
+                ReadBehavior::Value => Ok(*self.value.borrow()),
+                ReadBehavior::AccessDenied => Err(ActuatorError::OsFailure {
+                    code: ERROR_ACCESS_DENIED,
+                    function: "GetPriorityClass",
+                }),
+                ReadBehavior::TransientFailure => Err(ActuatorError::OsFailure {
+                    code: 87,
+                    function: "GetPriorityClass",
+                }),
+                ReadBehavior::Gone => Err(ActuatorError::IdentityMismatch),
             }
         }
     }
@@ -929,5 +1339,383 @@ mod tests {
             created_at_unix_ms: 0,
         };
         assert_eq!(intent.property.kind, ACTION_KIND_CPU_PRIORITY);
+    }
+
+    /// RS-017 restore engine tests (nested so the fakes above are in scope).
+    mod restore_tests {
+        use super::*;
+
+        fn rules() -> PolicyRules {
+            PolicyRules::default_experiment()
+        }
+
+        fn identity() -> ProcessIdentity {
+            ProcessIdentity::new(4242, 133_000_000_000_000_000)
+        }
+
+        fn target() -> crate::policy::TargetObservation {
+            use crate::eligibility::*;
+            crate::policy::TargetObservation {
+                identity_check: IdentityVerification::Matches,
+                owner_session: OwnerSessionObservation::CurrentUserSession,
+                focus: FocusObservation::Observed {
+                    target_foreground: false,
+                    observed_age_ms: 100,
+                },
+                classification: SafetyClassification::VerifiedNonCritical,
+                priority_class: PriorityClassObservation::Normal,
+                children: ChildObservation::Observed { live_children: 0 },
+                capability: PriorityCapability::Supported,
+            }
+        }
+
+        /// A journal seeded with one durably Applied action
+        /// (original 0x20 -> desired 0x4000, deadline 122_000).
+        fn applied_journal() -> FakeJournal {
+            let journal = FakeJournal::default();
+            let intent = ActionIntent {
+                action_id: "act-1".to_string(),
+                agent_instance_id: "agent-1".to_string(),
+                pid: 4242,
+                creation_filetime: 133_000_000_000_000_000,
+                target_name: "app.exe".to_string(),
+                property: crate::journal::Property {
+                    kind: ACTION_KIND_CPU_PRIORITY,
+                    original: Some(0x20),
+                    desired: 0x4000,
+                },
+                consent_id: "c".to_string(),
+                rule_version: "policy_v1".to_string(),
+                ttl_ms: 120_000,
+                created_at_unix_ms: 2_000,
+            };
+            journal.record_prepared(&intent).expect("prepare");
+            journal
+                .transition(
+                    "act-1",
+                    ActionState::Prepared,
+                    &Event::ApplyVerified {
+                        deadline_unix_ms: 122_000,
+                    },
+                    2_000,
+                )
+                .expect("apply");
+            journal
+        }
+
+        #[test]
+        fn ttl_expiry_restores_the_original_and_verifies() {
+            let journal = applied_journal();
+            let mut engine = RestoreEngine::default();
+            let mut actuator = FakeActuator::new(WriteBehavior::Success);
+            *actuator.value.borrow_mut() = 0x4000; // the write is live
+            let outcome = engine.restore_once(
+                &journal,
+                &mut actuator,
+                &identity(),
+                "act-1",
+                RestoreTrigger::TtlExpired,
+                123_000,
+            );
+            assert_eq!(outcome, RestoreOutcome::Restored { wrote_back: true });
+            assert_eq!(actuator.call_count(), 1);
+            let snapshot = journal
+                .record_snapshot("act-1")
+                .expect("store")
+                .expect("record");
+            assert_eq!(snapshot.state, ActionState::Restored);
+            assert!(!engine.pending_retry("act-1", 200_000));
+        }
+
+        #[test]
+        fn restore_preserves_an_external_change_as_conflict() {
+            let journal = applied_journal();
+            let mut engine = RestoreEngine::default();
+            let mut actuator = FakeActuator::new(WriteBehavior::Success);
+            *actuator.value.borrow_mut() = 0x80; // someone else wrote
+            let outcome = engine.restore_once(
+                &journal,
+                &mut actuator,
+                &identity(),
+                "act-1",
+                RestoreTrigger::ForegroundReturned,
+                123_000,
+            );
+            assert_eq!(outcome, RestoreOutcome::Conflict);
+            assert_eq!(
+                actuator.call_count(),
+                0,
+                "external changes are never overwritten"
+            );
+            assert_eq!(
+                journal
+                    .record_snapshot("act-1")
+                    .expect("store")
+                    .expect("record")
+                    .state,
+                ActionState::Conflict
+            );
+        }
+
+        #[test]
+        fn restore_of_a_gone_target_writes_nothing() {
+            let journal = applied_journal();
+            let mut engine = RestoreEngine::default();
+            let mut actuator = FakeActuator::new(WriteBehavior::Success);
+            actuator.read_behavior = ReadBehavior::Gone;
+            let outcome = engine.restore_once(
+                &journal,
+                &mut actuator,
+                &identity(),
+                "act-1",
+                RestoreTrigger::Error,
+                123_000,
+            );
+            assert_eq!(outcome, RestoreOutcome::TargetGone);
+            assert_eq!(actuator.call_count(), 0, "replacement receives zero writes");
+            assert_eq!(
+                journal
+                    .record_snapshot("act-1")
+                    .expect("store")
+                    .expect("record")
+                    .state,
+                ActionState::TargetGone
+            );
+        }
+
+        #[test]
+        fn nothing_to_undo_restores_without_writing() {
+            let journal = applied_journal();
+            let mut engine = RestoreEngine::default();
+            let mut actuator = FakeActuator::new(WriteBehavior::Success);
+            // value is already the original 0x20.
+            let outcome = engine.restore_once(
+                &journal,
+                &mut actuator,
+                &identity(),
+                "act-1",
+                RestoreTrigger::CleanExit,
+                123_000,
+            );
+            assert_eq!(outcome, RestoreOutcome::Restored { wrote_back: false });
+            assert_eq!(actuator.call_count(), 0);
+        }
+
+        #[test]
+        fn transient_failures_retry_at_1s_5s_30s_then_manual() {
+            let journal = applied_journal();
+            let mut engine = RestoreEngine::default();
+            let mut actuator = FakeActuator::new(WriteBehavior::Success);
+            actuator.read_behavior = ReadBehavior::TransientFailure;
+            let base = 123_000;
+            let o1 = engine.restore_once(
+                &journal,
+                &mut actuator,
+                &identity(),
+                "act-1",
+                RestoreTrigger::Suspend,
+                base,
+            );
+            assert_eq!(
+                o1,
+                RestoreOutcome::RetryScheduled {
+                    due_unix_ms: base + 1_000
+                }
+            );
+            // A call before the due time restates the schedule (no busy loop).
+            let early = engine.restore_once(
+                &journal,
+                &mut actuator,
+                &identity(),
+                "act-1",
+                RestoreTrigger::Suspend,
+                base + 200,
+            );
+            assert_eq!(
+                early,
+                RestoreOutcome::RetryScheduled {
+                    due_unix_ms: base + 1_000
+                }
+            );
+            let o2 = engine.restore_once(
+                &journal,
+                &mut actuator,
+                &identity(),
+                "act-1",
+                RestoreTrigger::Suspend,
+                base + 1_000,
+            );
+            assert_eq!(
+                o2,
+                RestoreOutcome::RetryScheduled {
+                    due_unix_ms: base + 1_000 + 5_000
+                }
+            );
+            let o3 = engine.restore_once(
+                &journal,
+                &mut actuator,
+                &identity(),
+                "act-1",
+                RestoreTrigger::Suspend,
+                base + 6_000,
+            );
+            assert_eq!(
+                o3,
+                RestoreOutcome::RetryScheduled {
+                    due_unix_ms: base + 6_000 + 30_000
+                }
+            );
+            let o4 = engine.restore_once(
+                &journal,
+                &mut actuator,
+                &identity(),
+                "act-1",
+                RestoreTrigger::Suspend,
+                base + 36_000,
+            );
+            assert_eq!(o4, RestoreOutcome::ManualRetry);
+            // The record stays RestorePending (pinned), never fabricated done.
+            let snapshot = journal
+                .record_snapshot("act-1")
+                .expect("store")
+                .expect("record");
+            assert_eq!(snapshot.state, ActionState::RestorePending);
+            assert!(!engine.pending_retry("act-1", base + 36_000));
+        }
+
+        #[test]
+        fn access_denied_needs_attention_without_retries() {
+            let journal = applied_journal();
+            let mut engine = RestoreEngine::default();
+            let mut actuator = FakeActuator::new(WriteBehavior::Success);
+            actuator.read_behavior = ReadBehavior::AccessDenied;
+            let outcome = engine.restore_once(
+                &journal,
+                &mut actuator,
+                &identity(),
+                "act-1",
+                RestoreTrigger::ConsentRevoked,
+                123_000,
+            );
+            assert_eq!(outcome, RestoreOutcome::NeedsAttention);
+            assert!(!engine.pending_retry("act-1", 123_000));
+            assert_eq!(
+                journal
+                    .record_snapshot("act-1")
+                    .expect("store")
+                    .expect("record")
+                    .state,
+                ActionState::RestorePending
+            );
+        }
+
+        #[test]
+        fn success_on_a_scheduled_retry_clears_the_schedule() {
+            let journal = applied_journal();
+            let mut engine = RestoreEngine::default();
+            let mut actuator = FakeActuator::new(WriteBehavior::Success);
+            *actuator.value.borrow_mut() = 0x4000;
+            actuator.read_behavior = ReadBehavior::TransientFailure;
+            let o1 = engine.restore_once(
+                &journal,
+                &mut actuator,
+                &identity(),
+                "act-1",
+                RestoreTrigger::Suspend,
+                123_000,
+            );
+            assert!(matches!(o1, RestoreOutcome::RetryScheduled { .. }));
+            actuator.read_behavior = ReadBehavior::Value;
+            let o2 = engine.restore_once(
+                &journal,
+                &mut actuator,
+                &identity(),
+                "act-1",
+                RestoreTrigger::Suspend,
+                124_000,
+            );
+            assert_eq!(o2, RestoreOutcome::Restored { wrote_back: true });
+            assert!(!engine.pending_retry("act-1", 124_000));
+        }
+
+        #[test]
+        fn disable_stops_new_applies_and_drops_the_preview() {
+            let journal = FakeJournal::default();
+            let mut coordinator = Coordinator::new(rules());
+            let mut actuator = FakeActuator::new(WriteBehavior::Success);
+            let id = identity();
+            let list = crate::eligibility::Allowlist::new(
+                crate::eligibility::ELIGIBILITY_RULES_VERSION,
+                &["synthetic-workload.exe"],
+            );
+            let req = PreviewRequest {
+                identity: &id,
+                image_name: "synthetic-workload.exe",
+                target: target(),
+                allowlist: &list,
+                user_exclusions: &[],
+                pressure: PressureLevel::Elevated,
+                action_id: "act-1",
+                now_unix_ms: 1_000,
+                ttl_ms: None,
+                desired: 0x4000,
+            };
+            assert!(matches!(
+                coordinator.preview(&journal, req),
+                PreviewVerdict::Offered(_)
+            ));
+            coordinator.disable();
+            assert!(coordinator.is_disabled());
+            let req2 = PreviewRequest {
+                identity: &id,
+                image_name: "synthetic-workload.exe",
+                target: target(),
+                allowlist: &list,
+                user_exclusions: &[],
+                pressure: PressureLevel::Elevated,
+                action_id: "act-2",
+                now_unix_ms: 2_000,
+                ttl_ms: None,
+                desired: 0x4000,
+            };
+            assert_eq!(
+                coordinator.preview(&journal, req2),
+                PreviewVerdict::Disabled
+            );
+            let outcome = coordinator.confirm(&journal, &mut actuator, &id, "act-1", 2_000);
+            assert_eq!(outcome, ConfirmOutcome::Disabled);
+            assert_eq!(actuator.call_count(), 0);
+            coordinator.enable();
+            let req3 = PreviewRequest {
+                identity: &id,
+                image_name: "synthetic-workload.exe",
+                target: target(),
+                allowlist: &list,
+                user_exclusions: &[],
+                pressure: PressureLevel::Elevated,
+                action_id: "act-3",
+                now_unix_ms: 3_000,
+                ttl_ms: None,
+                desired: 0x4000,
+            };
+            assert!(matches!(
+                coordinator.preview(&journal, req3),
+                PreviewVerdict::Offered(_)
+            ));
+        }
+
+        #[test]
+        fn ttl_snapshot_helper_flags_expired_deadlines() {
+            let journal = applied_journal();
+            let snapshot = journal
+                .record_snapshot("act-1")
+                .expect("store")
+                .expect("record");
+            assert!(
+                !snapshot.ttl_expired(122_000),
+                "deadline itself is not expired"
+            );
+            assert!(snapshot.ttl_expired(122_001));
+        }
     }
 }

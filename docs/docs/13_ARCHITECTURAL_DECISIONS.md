@@ -457,3 +457,40 @@ gate until recovery tests pass.
 unit tests over fakes and by an end-to-end test over the real SQLite store
 (+10 tests); wiring the real (disabled) actuator behind these traits is a
 small, auditable step for the G3 slice.
+
+## ADR-032: Restore engine — compare-before-restore with bounded retries — Accepted (implemented 2026-10-26; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+
+**Context:** RS-017: restoration on all contract triggers, bounded retry,
+external conflict, retained unresolved state — composed from the pure
+coordinator (RS-016), the journal state machine (RS-031) and the real
+actuator's identity-validated `read` (0.3.25).
+
+**Decisions:**
+- A `RestoreEngine` (one per agent) drives `restore_once` per record.
+  Trigger vocabulary is explicit (11 triggers, stable codes); all triggers
+  move `Applied → RestorePending` through the journal first — which is
+  what blocks new applies — and disable additionally drops the coordinator
+  preview and refuses previews/confirms until re-enabled.
+- **Compare-before-restore**: the current value is read through the
+  identity-validated handle before anything is written. `current ==
+  desired` → write the original back and verify; `current == original` →
+  terminal `Restored` with **zero writes**; a third value → `Conflict`
+  (preserved, never overwritten); identity mismatch on read → `TargetGone`
+  (zero writes to a replacement); unreadable → retry, never assumed.
+- **Bounded retries at 1 s / 5 s / 30 s**, then `ManualRetry` — the record
+  stays `RestorePending` (pinned). An early call before the scheduled due
+  time restates the schedule instead of retrying (no busy loop). A call at
+  or after the due time attempts again; success clears the schedule.
+- **Access denied (`ERROR_ACCESS_DENIED`) → `NeedsAttention` immediately**
+  — no retries for a must-not-repeat failure.
+- The original value is never inferred: a record without a readable
+  pinned original goes straight to `NeedsAttention`.
+- The journal trait's snapshot now carries the full intent
+  (`JournalSnapshot { state, deadline, intent }`) so the engine classifies
+  with the same `reconcile` logic as startup recovery — one decision
+  function for both paths.
+
+**Consequences:** every contract restore trigger is a two-line caller
+choice; the 2-second verification target is the agent ticker's scheduling
+concern (the engine reports due times rather than sleeping); "never say all
+restored" remains the caller's aggregate over unresolved records.

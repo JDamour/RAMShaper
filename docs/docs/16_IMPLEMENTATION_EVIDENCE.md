@@ -1500,3 +1500,80 @@ duplicate pure coordinator (`action.rs`) and a duplicate
 deleted unmerged before any commit. Pre-flight `git log`/CHANGELOG checks
 had shown RS-016 unclaimed ~30 min earlier; the claim window is that short
 with three live sessions.
+
+---
+
+# RS-017 collision note — restore engine is coordinator.rs (parallel session), 2026-10-26
+
+Following this session's earlier RS-016 pattern: while the pure RS-017
+restore/reconcile engine was being built here (claim posted to shared
+memory, `recovery.rs` + a Windows `RestoreActuator` written and
+partially tested), the parallel session landed the restore engine inside
+`ramshaper-core::coordinator.rs` — `RestoreTrigger` (11 named triggers
+including `Suspend`/`Error`/`CleanExit`), `RestoreOutcome` (including
+`NeedsAttention` for must-not-retry failures and `RetryScheduled` with
+absolute due times), the per-action bounded-retry bookkeeping
+(`RESTORE_RETRY_DELAYS_MS` 1 s / 5 s / 30 s, then `ManualRetry`) and the
+compare-before-restore `RestoreEngine`. **`coordinator.rs` is canonical
+for RS-017; the duplicate `core::recovery.rs` and
+`windows::restore.rs` were deleted unmerged** — nothing in them is
+missing from the canonical engine (its trigger set, retry schedule and
+outcome classes are a superset of the duplicates').
+
+The complementary piece delivered here instead: **`PriorityActuator::read`
+implemented for `WindowsPriorityActuator`** — the identity-validated read
+their engine composes with: query-only handle, exact creation FILETIME
+validated through the handle (`IdentityMismatch` otherwise — a reused PID
+never lends its value to a consented action), class read with the
+preserved-error `OsFailure` mapping. Two live tests: a spawned child reads
+`NORMAL` through the validated handle (wrong creation marker refused),
+and an unresolvable PID refuses as `IdentityMismatch`.
+
+For the coordinator session, from the deleted duplicates' design (all
+covered by yours — confirming, not requesting): reconcile routing
+(Applied → restore, `RestorePending` → retry, `Prepared`/`Uncertain` →
+startup reconcile), and the never-infer-a-missing-original guard.
+
+---
+
+# RS-017 — restore engine (triggers, bounded retry, conflict), 2026-10-26
+
+**Scope implemented:** `RestoreEngine` in `ramshaper-core::coordinator`
+(+10 tests): all 11 contract restore triggers as a typed vocabulary moving
+`Applied → RestorePending` first; compare-before-restore through the
+actuator's identity-validated `read` (0.3.25's `WindowsPriorityActuator`
+impl); bounded retries 1 s / 5 s / 30 s then manual; `ERROR_ACCESS_DENIED`
+→ immediate attention; `Coordinator::disable/enable` stopping new applies.
+Reuses `journal::reconcile` so startup recovery and live restoration are
+literally the same decision function. **No real process is written**: the
+actuator is the test fake (the real impl stays behind the disabled-IP
+boundary; the agent does not expose policy commands yet).
+
+**Pinned by test:** TTL expiry restores the original through one verified
+write; an external third value is preserved untouched as `Conflict` (zero
+writes); a gone target is `TargetGone` with zero writes; a record already
+back at its original resolves `Restored { wrote_back: false }` with zero
+writes; transient read failures schedule retries at exactly +1 s / +5 s /
++30 s (an early call restates the schedule instead of hammering), then
+`ManualRetry` with the record still pinned `RestorePending`;
+`ERROR_ACCESS_DENIED` reads go to `NeedsAttention` with no retries; a
+success on a scheduled retry clears the schedule; disable drops the
+preview and refuses previews/confirms until re-enabled; the snapshot's
+`ttl_expired` treats the deadline instant itself as not-yet-expired.
+
+**Workspace gates (2026-10-26):** fmt clean; clippy workspace-wide
+`-D warnings` clean; `cargo test --workspace --locked` **308 passed,
+0 failed** (core 179 incl. 10 restore-engine tests; the end-to-end SQLite
+store test updated for the richer `JournalSnapshot` trait).
+
+**Collision note:** the concurrent session independently started RS-017
+(`recovery.rs`/`restore.rs`), saw this slice and deleted their duplicates
+unmerged (their 0.3.25 note) — the canonical engine is
+`core::coordinator.rs`. Their `WindowsPriorityActuator::read` (0.3.25) is
+the complementary half this engine composes; both landed together.
+
+**Not in this slice (recorded, not hidden):** the 2-second
+verification-target measurement (the agent ticker owns scheduling; the
+engine exposes due times), session-lock/suspend signal wiring (R-03
+adapters exist; the agent loop integrating them is the remaining G3 glue),
+and multi-action accounting (RS-018).

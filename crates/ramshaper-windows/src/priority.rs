@@ -35,6 +35,26 @@ use crate::identity;
 pub struct WindowsPriorityActuator;
 
 impl PriorityActuator for WindowsPriorityActuator {
+    fn read(&self, expected: &ProcessIdentity) -> Result<u32, ActuatorError> {
+        // SAFETY: plain call with a numeric PID; query-only rights.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, expected.pid) }
+            .map_err(|_| ActuatorError::IdentityMismatch)
+            .map(|handle| {
+                // SAFETY: valid owned handle from OpenProcess.
+                unsafe { OwnedHandle::adopt(handle) }
+            })?;
+        // Validate the exact creation identity through the handle: a
+        // reused PID must never lend its value to the consented action.
+        match identity::creation_filetime(&handle) {
+            Ok(creation) if creation == expected.creation_filetime_100ns => {}
+            _ => return Err(ActuatorError::IdentityMismatch),
+        }
+        read_class(&handle).ok_or(ActuatorError::OsFailure {
+            code: std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as u32,
+            function: "GetPriorityClass",
+        })
+    }
+
     fn write_verified(
         &mut self,
         expected: &ProcessIdentity,
@@ -85,7 +105,7 @@ impl PriorityActuator for WindowsPriorityActuator {
 
 /// Read the priority class through a handle; `None` on failure (the caller
 /// decides whether that means "unknown outcome").
-fn read_class(handle: &OwnedHandle) -> Option<u32> {
+pub(crate) fn read_class(handle: &OwnedHandle) -> Option<u32> {
     // SAFETY: owned handle; plain read.
     let class = unsafe { GetPriorityClass(handle.raw()) };
     (class != 0).then_some(class)
@@ -193,5 +213,30 @@ mod tests {
         let mut actuator = WindowsPriorityActuator;
         let result = actuator.write_verified(&identity, BELOW_NORMAL_PRIORITY_CLASS.0);
         assert!(matches!(result, Err(ActuatorError::IdentityMismatch)));
+    }
+
+    #[test]
+    fn read_returns_the_class_through_a_validated_handle() {
+        let mut child = spawn_quiet_child(4);
+        let pid = child.id();
+        let identity = resolve_identity(pid).expect("fresh child identity");
+        let actuator = WindowsPriorityActuator;
+
+        assert_eq!(actuator.read(&identity), Ok(NORMAL_PRIORITY_CLASS.0));
+        let reused = ProcessIdentity::new(pid, identity.creation_filetime_100ns + 1);
+        assert_eq!(actuator.read(&reused), Err(ActuatorError::IdentityMismatch));
+
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn read_on_an_unresolvable_pid_is_identity_mismatch() {
+        let identity = ProcessIdentity::new(unresolvable_pid(), 12_345);
+        let actuator = WindowsPriorityActuator;
+        assert_eq!(
+            actuator.read(&identity),
+            Err(ActuatorError::IdentityMismatch)
+        );
     }
 }

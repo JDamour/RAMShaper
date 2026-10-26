@@ -565,6 +565,14 @@ fn store_plugs_into_the_coordinator_trait() {
             self.written.borrow_mut().push(desired);
             Ok(desired)
         }
+
+        fn read(
+            &self,
+            _identity: &ramshaper_core::ProcessIdentity,
+        ) -> Result<u32, ramshaper_core::coordinator::ActuatorError> {
+            // The fake apply is live: reads see the last written value.
+            Ok(*self.written.borrow().last().unwrap_or(&0x20))
+        }
     }
 
     let verdict = coordinator.preview(
