@@ -494,3 +494,38 @@ actuator's identity-validated `read` (0.3.25).
 choice; the 2-second verification target is the agent ticker's scheduling
 concern (the engine reports due times rather than sleeping); "never say all
 restored" remains the caller's aggregate over unresolved records.
+
+## ADR-033: Guardrails — pure books and a safety-trip evaluator — Accepted (implemented 2026-10-26; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+
+**Context:** RS-018 (AT-14): one-action cap, 60 s per-identity cooldown,
+target disable on failure, and child/focus/session safety handling with
+recorded incompatibilities.
+
+**Decisions:**
+- Everything is **pure state in `ramshaper-core::guardrails`** — the agent
+  composes it around the coordinator, restore engine and journal; no OS
+  access, no timers of its own.
+- `TargetBook`: a 60 s per-identity cooldown starts only on **terminal**
+  records (`Restored`/`TargetGone`); pinned records start none (their
+  target needs attention, not another experiment). Cooldowns are keyed by
+  exact identity (pid + creation FILETIME), so one target's cooldown never
+  affects another. A failed apply/verification/restore **disables that
+  target's policy until an explicit `re_enable`** — never lifted by time.
+- `OneActionCap`: reserve/release of the single slot; reserving the same
+  action id is idempotent (repeat confirmations hold), a different id is
+  refused with the holder named.
+- `evaluate(observation)`: child-spawned / foreground-returned /
+  session-locked / stale-focus map to RS-017 restore triggers
+  (`ChildSpawned` is a new trigger code) and a child observation records a
+  `CompatibilityFinding` — evidence for the RS-024 Stage B allowlist
+  process, not a verdict about the app. The decision carries no path that
+  could write to the descendant: AT-14's "unapproved descendants receive
+  no explicit write" holds by construction (the finding is data; the
+  restore targets the parent).
+- No automatic repeat: a cooldown expiry admits a *new* experiment, which
+  still requires a fresh preview and confirmation (that gate lives in the
+  coordinator).
+
+**Consequences:** the remaining G3 glue is the agent loop that feeds
+observations and performs what decisions call for; every guardrail rule is
+pinned by 8 unit tests without any OS interaction.

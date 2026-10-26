@@ -17,6 +17,7 @@ pub mod config;
 pub mod coordinator;
 pub mod eligibility;
 pub mod envelope;
+pub mod guardrails;
 pub mod history;
 pub mod identity;
 pub mod ipc;
@@ -50,6 +51,10 @@ pub use eligibility::{
     ELIGIBILITY_RULES_VERSION,
 };
 pub use envelope::{LowMemorySignal, MetricEnvelope};
+pub use guardrails::{
+    evaluate as evaluate_guardrails, CompatibilityFinding, Decision as GuardrailDecision,
+    OneActionCap, SafetyObservation, SlotTaken, TargetBook, TripTrigger, COOLDOWN_MS,
+};
 pub use history::{BoundedHistory, HistoryStats, DEFAULT_BYTE_BUDGET, DEFAULT_RETENTION_MS};
 pub use identity::{IdentityVerification, ProcessIdentity};
 pub use journal::{

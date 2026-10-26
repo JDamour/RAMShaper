@@ -1577,3 +1577,37 @@ verification-target measurement (the agent ticker owns scheduling; the
 engine exposes due times), session-lock/suspend signal wiring (R-03
 adapters exist; the agent loop integrating them is the remaining G3 glue),
 and multi-action accounting (RS-018).
+
+---
+
+# RS-018 — guardrails (cap, cooldown, disable, safety trips), 2026-10-26
+
+**Scope implemented:** `ramshaper-core::guardrails` (+8 tests), the pure
+decision layer AT-14 names: `OneActionCap` (single slot; same-id reserve
+idempotent; refusals name the holder), `TargetBook` (60 s per-identity
+cooldown after terminal records only, keyed by exact identity; target
+disable on failure lifted only by explicit `re_enable`, never by time) and
+`evaluate` (child-spawned → RS-017 `child_spawned` trip + recorded
+`CompatibilityFinding`; foreground-returned / session-locked / stale-focus
+→ their triggers). **No OS writes**: unapproved descendants appear only as
+recorded findings — the decision vocabulary has no write-to-child path.
+
+**Pinned by test:** cooldown blocks for exactly 60 s after a terminal
+record then admits; per-identity keying (one target's cooldown never
+affects another); pinned records start no cooldown; a disabled target
+stays inadmissible even at `u64::MAX` until re-enable (reason carried);
+repeat confirmations hold the cap while a different action is refused and
+terminal release frees it; child observations trip with the finding
+attached (child identity + image + timestamp recorded); the three other
+observations map to their triggers; trigger codes are stable.
+
+**Workspace gates (2026-10-26):** fmt clean; clippy workspace-wide
+`-D warnings` clean; `cargo test --workspace --locked` **316 passed,
+0 failed**.
+
+**Not in this slice (recorded, not hidden):** the agent loop that feeds
+safety observations and performs the mapped restorations (the RS-017
+engine accepts the trips as-is); the child-inheritance *live probe*
+(AT-14's second evidence half — a real child inheriting a priority class
+needs the enabled actuator at the agent boundary); allowlist population
+(RS-024 Stage B consumes the findings).
