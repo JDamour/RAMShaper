@@ -3457,6 +3457,7 @@ name = "ramshaper-agent"
 version = "0.1.0"
 dependencies = [
  "ramshaper-core",
+ "ramshaper-journal",
  "ramshaper-platform",
  "ramshaper-windows",
  "serde",

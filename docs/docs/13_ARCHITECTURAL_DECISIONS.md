@@ -529,3 +529,37 @@ recorded incompatibilities.
 **Consequences:** the remaining G3 glue is the agent loop that feeds
 observations and performs what decisions call for; every guardrail rule is
 pinned by 8 unit tests without any OS interaction.
+
+## ADR-034: Agent policy loop — one ticker, restore-direction only — Accepted (implemented 2026-10-26; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+
+**Context:** the G3 glue: the pure stack (coordinator, restore engine,
+guardrails, journal) needed an agent-side driver that honors "restart
+restores outstanding records before enabling any new actions" and the
+2-second verification target — while actuation remains disabled in the
+action direction (no IPC path can create actions yet).
+
+**Decisions:**
+- `ramshaper-agent::policy_loop` is **one ticker over the pure stack**:
+  `startup_recovery` reconciles unresolved records first (`Prepared`/
+  `Uncertain` from the current value — never a reapply; `Applied`/
+  `RestorePending` through the restore engine), `observe_safety` evaluates
+  RS-018 guardrail observations and performs the mapped restoration on the
+  outstanding `Applied` record, and `tick` performs TTL-expiry restores,
+  due retries, and missed-deadline accounting.
+- The **2-second verification target is accounted, not assumed**: each
+  trigger is stamped when fired; a terminal outcome later than 2 s counts
+  exactly one missed deadline (a tick past the target never double-counts,
+  and the miss stays counted after an eventual honest success).
+- The loop is **restore-direction only** and gated
+  (`PolicyLoopConfig::enabled`, default off, no IPC path flips it): it can
+  act on records that exist, and nothing can create records yet — the
+  action-direction gate stays closed.
+- The loop composes with the concurrent session's `policy::PolicyGate`
+  (the four policy IPC commands behind one lock, startup reconciliation
+  before the pipe accepts): the gate owns previews/confirms and feeds the
+  loop the restore direction; both halves landed as one increment and the
+  crate compiles only as a unit.
+
+**Consequences:** the G3 glue is in place end to end — what remains
+before G3 evidence is owner-gated: enabling the consent flow, the live
+child-inheritance probe, and allowlist population (RS-024 Stage B).

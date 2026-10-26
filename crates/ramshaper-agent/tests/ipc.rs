@@ -36,6 +36,7 @@ impl TestAgent {
             format!(r"\\.\pipe\{name}"),
             WatchConfig::new(interval_ms).expect("cadence"),
             config_summary,
+            None,
         )
         .expect("agent serves");
         // Give the accept thread a moment; fail loudly on early errors.

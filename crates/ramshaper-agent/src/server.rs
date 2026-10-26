@@ -72,6 +72,10 @@ struct Shared {
     /// (RS-011). Shared by every connection so rates stay identity-keyed to
     /// the *previous* scan, wherever it came from.
     process_state: Mutex<ProcessScanState>,
+    /// The policy gate when the agent was started with one (`None` =
+    /// policy-stage commands answer `Unsupported`). Disabled at startup;
+    /// startup reconciliation runs before the accept loop.
+    policy: Option<Arc<crate::policy::PolicyGate>>,
 }
 
 /// Maximum rows served in one `GetProcesses` response (RS-011). The frame
@@ -261,6 +265,7 @@ pub fn serve(
     pipe_name: String,
     config: WatchConfig,
     config_summary: ConfigSummary,
+    policy: Option<Arc<crate::policy::PolicyGate>>,
 ) -> Result<AgentHandle, String> {
     let instance_id = ramshaper_windows::agent_instance_id();
 
@@ -291,7 +296,22 @@ pub fn serve(
         notify: Condvar::new(),
         interval_ms: config.interval_ms(),
         process_state: Mutex::new(ProcessScanState::default()),
+        policy: policy.clone(),
     });
+
+    // Startup reconciliation (contract 14 §6): restore outstanding records
+    // BEFORE serving, through the restore-direction loop (`policy_loop`).
+    // The policy gate itself is constructed disabled, and nothing in the
+    // agent enables it — startup is Observe Only.
+    if let Some(gate) = &shared.policy {
+        let mut loop_ = crate::policy_loop::PolicyLoop::new(
+            crate::policy_loop::PolicyLoopConfig { enabled: true },
+            gate.journal_clone(),
+            ramshaper_windows::priority::WindowsPriorityActuator,
+        );
+        let resolved = loop_.startup_recovery(ramshaper_core::SystemClock.unix_epoch_ms());
+        eprintln!("state=startup_recovery resolved={resolved}");
+    }
 
     // Collector: samples on the watch cadence, publishes to shared state.
     let collector_shared = Arc::clone(&shared);
@@ -650,6 +670,7 @@ fn handle_connection(
                 now_monotonic_ms: ramshaper_core::SystemClock.monotonic_ms(),
                 processes,
                 config: material.config_summary.clone(),
+                policy: shared.policy.as_deref(),
             };
             dispatch(&envelope, &context)
         };

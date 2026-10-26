@@ -689,6 +689,14 @@ fn inputs_for<'a>(
     }
 }
 
+/// `NORMAL_PRIORITY_CLASS` — the only original value the 0.2 policy finds
+/// actionable. The real actuator asserts this equals the OS constant.
+pub const NORMAL_PRIORITY_CLASS: u32 = 0x0020;
+
+/// `BELOW_NORMAL_PRIORITY_CLASS` — the only value the 0.2 policy action
+/// ever writes. The real actuator asserts this equals the OS constant.
+pub const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x4000;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1196,3 +1204,4 @@ mod tests {
         );
     }
 }
+

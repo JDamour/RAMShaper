@@ -45,6 +45,12 @@ pub enum ErrorCode {
     Busy,
     /// An OS error occurred; `message` carries the preserved code.
     OsError,
+    /// A policy request argument was malformed or references nothing
+    /// actionable (additive: policy stage).
+    InvalidArgument,
+    /// The outcome of a policy write is unknown; recovery will reconcile
+    /// (additive: policy stage).
+    Uncertain,
 }
 
 impl ErrorCode {
@@ -89,6 +95,60 @@ pub const COMMAND_LIST_ACTIONS: &str = "ListActions";
 pub const COMMAND_GET_PROCESSES: &str = "GetProcesses";
 pub const COMMAND_GET_CONFIG: &str = "GetConfig";
 
+/// Policy-stage commands (contract 14 §7), additive to protocol v1: agents
+/// built before policy (or with the policy gate absent) answer
+/// `Unsupported`, which clients render as an explained refusal, never as
+/// silence. Actuation stays behind the agent's policy gate — disabled at
+/// startup; enabling is the G3 consent flow, not a protocol command.
+pub const COMMAND_PREVIEW_ACTION: &str = "PreviewAction";
+pub const COMMAND_CONFIRM_ACTION: &str = "ConfirmAction";
+pub const COMMAND_RESTORE_ACTION: &str = "RestoreAction";
+pub const COMMAND_DISABLE_ACTIONS: &str = "DisableActions";
+
+/// `PreviewAction` payload. The client names the target and the durable
+/// action ID; the agent re-resolves the identity, takes fresh observations
+/// through its own adapters and applies every eligibility gate itself — a
+/// client request is a *candidate*, never authority.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PreviewActionRequest {
+    /// Caller-chosen durable action ID (replays return the same preview).
+    pub action_id: String,
+    /// Target PID.
+    pub pid: u32,
+    /// Exact creation FILETIME (100-ns units) as a decimal string — full
+    /// 64-bit precision does not survive JSON numbers.
+    pub creation_filetime: String,
+    /// Target image name (label only; the agent re-reads it never — this
+    /// is the compatibility label the allowlist and exclusions match).
+    pub image_name: String,
+    /// Requested TTL (ms); `None` uses the policy default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_ms: Option<u64>,
+}
+
+/// `ConfirmAction` payload: the durable ID only. The exact process
+/// identity, original value and TTL were bound at preview time on the
+/// agent side; confirmation replays that binding against fresh
+/// observations (contract 14 §5).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConfirmActionRequest {
+    /// The previewed action's durable ID.
+    pub action_id: String,
+}
+
+/// `RestoreAction` payload: restore one action by durable ID (manual
+/// trigger; the record supplies identity, original and desired values).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RestoreActionRequest {
+    /// The applied action's durable ID.
+    pub action_id: String,
+}
+
+/// `DisableActions` payload: stop accepting new applies and restore
+/// everything outstanding. Empty in v1.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct DisableActionsRequest {}
+
 /// Error body of a failed response.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ErrorBody {
@@ -98,6 +158,10 @@ pub struct ErrorBody {
     pub message: String,
     /// Whether a retry could succeed.
     pub retryable: bool,
+    /// Optional structured detail (e.g. the explain-all eligibility report
+    /// of an `Ineligible` refusal). Additive: absent in older responses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<serde_json::Value>,
 }
 
 /// One response, serialized as one frame.
@@ -147,6 +211,30 @@ impl Response {
                 code,
                 message,
                 retryable: code.retryable(),
+                detail: None,
+            }),
+        }
+    }
+
+    /// A failed response carrying structured detail (e.g. the explain-all
+    /// eligibility report of an `Ineligible` refusal).
+    pub fn error_with_detail(
+        request_id: &str,
+        agent_instance_id: &str,
+        code: ErrorCode,
+        message: String,
+        detail: Option<serde_json::Value>,
+    ) -> Self {
+        Self {
+            ok: false,
+            request_id: request_id.to_string(),
+            agent_instance_id: agent_instance_id.to_string(),
+            data: None,
+            error: Some(ErrorBody {
+                code,
+                message,
+                retryable: code.retryable(),
+                detail,
             }),
         }
     }

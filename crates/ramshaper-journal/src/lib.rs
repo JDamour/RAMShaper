@@ -263,6 +263,27 @@ impl JournalStore {
         Ok(Recorded::Created)
     }
 
+    /// Pin the observed original value on a `Prepared` record (read-side
+    /// pinning): the coordinator reads the current value through the
+    /// validated handle before the write and persists what it saw —
+    /// contract 14 §6 requires the original durably committed BEFORE the
+    /// OS call. Only a `Prepared` record accepts it (immutable once
+    /// applied).
+    pub fn record_original(&self, action_id: &str, value: u32) -> Result<(), JournalError> {
+        let conn = self.conn.lock().expect("journal lock");
+        let changed = conn
+            .execute(
+                "UPDATE actions SET original_value = ?1
+                 WHERE action_id = ?2 AND state = 'Prepared'",
+                rusqlite::params![value as i64, action_id],
+            )
+            .map_err(|e| JournalError::classify(&e))?;
+        if changed == 0 {
+            return Err(JournalError::Missing(action_id.to_string()));
+        }
+        Ok(())
+    }
+
     /// Apply one event to a record through the pure state machine, guarded
     /// on the caller's expected state. `now_unix_ms` stamps terminal
     /// records. Returns the new state.
@@ -482,6 +503,14 @@ impl ramshaper_core::coordinator::ActionJournal for JournalStore {
         }
     }
 
+    fn record_original(
+        &self,
+        action_id: &str,
+        value: u32,
+    ) -> Result<(), ramshaper_core::coordinator::JournalFault> {
+        JournalStore::record_original(self, action_id, value).map_err(fault_of)
+    }
+
     fn record_snapshot(
         &self,
         action_id: &str,
@@ -496,6 +525,34 @@ impl ramshaper_core::coordinator::ActionJournal for JournalStore {
                 intent: Some(record.intent),
             }
         }))
+    }
+
+    fn unresolved_ids(&self) -> Result<Vec<String>, ramshaper_core::coordinator::JournalFault> {
+        let conn = self.conn.lock().expect("journal lock");
+        let mut stmt = conn
+            .prepare(
+                "SELECT action_id, state, recovery_retained FROM actions
+                 ORDER BY created_at_unix_ms, action_id",
+            )
+            .map_err(|e| fault_of(JournalError::classify(&e)))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)? != 0,
+                ))
+            })
+            .map_err(|e| fault_of(JournalError::classify(&e)))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| fault_of(JournalError::classify(&e)))?;
+        Ok(rows
+            .into_iter()
+            .filter(|(_id, state, retained)| {
+                state_from_name(state).is_some_and(|s| s.is_unresolved(*retained))
+            })
+            .map(|(id, _, _)| id)
+            .collect())
     }
 
     fn transition(

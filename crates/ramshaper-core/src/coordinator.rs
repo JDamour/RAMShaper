@@ -66,6 +66,12 @@ pub trait ActionJournal {
     /// # Errors
     /// [`JournalFault`] on storage failure (disk full, corrupt, quota…).
     fn record_prepared(&self, intent: &ActionIntent) -> Result<bool, JournalFault>;
+    /// Pin the observed original on a `Prepared` record (read-side
+    /// pinning; contract 14 §6). Only valid while the record is Prepared.
+    ///
+    /// # Errors
+    /// [`JournalFault`] on storage failure or a missing record.
+    fn record_original(&self, action_id: &str, value: u32) -> Result<(), JournalFault>;
     /// Load a record's snapshot (state, applied deadline, original
     /// intent), if present.
     ///
@@ -83,6 +89,13 @@ pub trait ActionJournal {
         event: &Event,
         now_unix_ms: u64,
     ) -> Result<ActionState, JournalFault>;
+
+    /// IDs of the unresolved (pinned) records — the recovery set, oldest
+    /// first.
+    ///
+    /// # Errors
+    /// [`JournalFault`] on storage failure.
+    fn unresolved_ids(&self) -> Result<Vec<String>, JournalFault>;
 }
 
 /// What the journal can tell about one record without mutating it.
@@ -113,8 +126,14 @@ impl<J: ActionJournal + ?Sized> ActionJournal for std::rc::Rc<J> {
     fn record_prepared(&self, intent: &ActionIntent) -> Result<bool, JournalFault> {
         (**self).record_prepared(intent)
     }
+    fn record_original(&self, action_id: &str, value: u32) -> Result<(), JournalFault> {
+        (**self).record_original(action_id, value)
+    }
     fn record_snapshot(&self, action_id: &str) -> Result<Option<JournalSnapshot>, JournalFault> {
         (**self).record_snapshot(action_id)
+    }
+    fn unresolved_ids(&self) -> Result<Vec<String>, JournalFault> {
+        (**self).unresolved_ids()
     }
     fn transition(
         &self,
@@ -458,6 +477,40 @@ impl Coordinator {
         match journal.record_prepared(&intent) {
             Ok(_) => {}
             Err(fault) => return ConfirmOutcome::StorageBlocked(fault.to_string()),
+        }
+
+        // Read-side pinning (contract 14 §6): the original value is read
+        // through the identity-validated handle and durably committed
+        // BEFORE the OS call. A record without it could never be restored
+        // (the engine refuses to invent an original).
+        match actuator.read(identity) {
+            Ok(current) => {
+                if let Err(fault) = journal.record_original(action_id, current) {
+                    return ConfirmOutcome::StorageBlocked(fault.to_string());
+                }
+            }
+            Err(ActuatorError::IdentityMismatch) => {
+                let _ = journal.transition(
+                    action_id,
+                    ActionState::Prepared,
+                    &Event::TargetVanished,
+                    now_unix_ms,
+                );
+                self.pending = None;
+                return ConfirmOutcome::IdentityGone;
+            }
+            Err(error) => {
+                let _ = journal.transition(
+                    action_id,
+                    ActionState::Prepared,
+                    &Event::ApplyFailed {
+                        reason: error.to_string(),
+                    },
+                    now_unix_ms,
+                );
+                self.pending = None;
+                return ConfirmOutcome::FailedClean(error.to_string());
+            }
         }
 
         // The OS write, through the verified handle.
@@ -932,6 +985,18 @@ mod tests {
             records.push((intent.clone(), ActionState::Prepared, None));
             Ok(true)
         }
+        fn record_original(&self, action_id: &str, value: u32) -> Result<(), JournalFault> {
+            if *self.fail_writes.borrow() {
+                return Err(JournalFault::Storage("injected failure".into()));
+            }
+            let mut records = self.records.borrow_mut();
+            let record = records
+                .iter_mut()
+                .find(|(i, state, _)| i.action_id == action_id && *state == ActionState::Prepared)
+                .ok_or_else(|| JournalFault::StateConflict(action_id.to_string()))?;
+            record.0.property.original = Some(value);
+            Ok(())
+        }
         fn record_snapshot(
             &self,
             action_id: &str,
@@ -946,6 +1011,17 @@ mod tests {
                     applied_deadline_unix_ms: *deadline,
                     intent: Some(intent.clone()),
                 }))
+        }
+        fn unresolved_ids(&self) -> Result<Vec<String>, JournalFault> {
+            // The fake tracks no recovery-retention flag; Failed records
+            // are treated as resolved (sufficient for the loop tests).
+            Ok(self
+                .records
+                .borrow()
+                .iter()
+                .filter(|(_, state, _)| state.is_unresolved(false))
+                .map(|(intent, _, _)| intent.action_id.clone())
+                .collect())
         }
         fn transition(
             &self,

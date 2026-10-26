@@ -9,6 +9,8 @@
 //!   (`CreateMemoryResourceNotification` / `QueryMemoryResourceNotification`).
 //! - [`identity`] — process identity via PID + exact creation FILETIME
 //!   (`OpenProcess` with `PROCESS_QUERY_LIMITED_INFORMATION`, `GetProcessTimes`).
+//! - [`job`] — managed-launch spike (RS-020): fresh advisory job + creation-time
+//!   job assignment via the attribute list; no suspension, no kill-on-close.
 //! - [`console`] — Ctrl+C cancellation event (`SetConsoleCtrlHandler`).
 //! - [`eligibility`] — eligibility signal-source adapters (R-03): owner/session,
 //!   foreground, priority class, children, capability probe, classification.
@@ -26,6 +28,7 @@ pub mod event;
 pub mod fs;
 pub mod handle;
 pub mod identity;
+pub mod job;
 pub mod memnotify;
 pub mod monitor;
 pub mod osinfo;

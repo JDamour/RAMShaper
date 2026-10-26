@@ -1611,3 +1611,43 @@ engine accepts the trips as-is); the child-inheritance *live probe*
 (AT-14's second evidence half — a real child inheriting a priority class
 needs the enabled actuator at the agent boundary); allowlist population
 (RS-024 Stage B consumes the findings).
+
+---
+
+# Agent policy loop — G3 glue (restore direction), 2026-10-26
+
+**Scope implemented:** `ramshaper-agent::policy_loop` (+6 tests): startup
+recovery that reconciles `Prepared`/`Uncertain` records from the current
+value and restores `Applied`/`RestorePending` ones through the RS-017
+engine; safety observations through the RS-018 guardrails with the mapped
+restoration on the outstanding record; TTL-expiry and due-retry ticks; and
+the 2-second verification target as **accounting** — one counted miss per
+trigger, never a fabricated success, preserved even after a later honest
+restore.
+
+**Pinned by test:** a disabled loop is a no-op on every entry point;
+startup recovery with the value already back at the original resolves with
+zero writes and counts one reconciled record; startup recovery with a live
+write restores the original; a child-spawned observation trips exactly one
+restore; a TTL-expired record restores on the tick past its deadline; and
+the missed-deadline test walks the full path — two transient read failures
+across the 2-second boundary count exactly one miss (ticks inside the
+target count none, repeats never double-count), the 1/5/30 s schedule
+lands its third attempt at first+6 s, and the eventual restore is real.
+
+**Composition:** the concurrent session's `policy::PolicyGate` (the four
+policy IPC commands, coordinator + journal + actuator behind one lock,
+startup reconciliation before the pipe accepts) wired this loop into
+`serve` as the restore-direction ticker; both halves landed as one
+increment (their repair pass even absorbed this module's helper mid-flight
+— the crate compiles only as a unit).
+
+**Workspace gates:** agent crate 21 passed / 0 failed at slice close
+(6 loop tests + the gate suite); the full workspace gate run is blocked
+only by the concurrent session's in-flight `tests/policy_ipc.rs` lint
+(two unused imports, being finished as this was written).
+
+**Not in this slice (recorded, not hidden):** the action direction stays
+closed (no IPC path can create actions; enabling is the owner-gated G3
+consent flow); the live child-inheritance probe and allowlist population
+(RS-024 Stage B) remain.

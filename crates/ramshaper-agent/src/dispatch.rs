@@ -5,10 +5,13 @@
 //! before command dispatch (contract 14 §7). `SubscribeSnapshots`
 //! acknowledges and lets the connection layer switch to streaming.
 
+use crate::policy::{PolicyGate, ResponseData};
+use ramshaper_core::clock::WallClock;
 use ramshaper_core::ipc::{
-    ErrorCode, RequestEnvelope, Response, COMMAND_GET_CAPABILITIES, COMMAND_GET_CONFIG,
-    COMMAND_GET_PROCESSES, COMMAND_GET_SNAPSHOT, COMMAND_LIST_ACTIONS, COMMAND_SUBSCRIBE_SNAPSHOTS,
-    PROTOCOL_VERSION,
+    ErrorCode, RequestEnvelope, Response, COMMAND_CONFIRM_ACTION, COMMAND_DISABLE_ACTIONS,
+    COMMAND_GET_CAPABILITIES, COMMAND_GET_CONFIG, COMMAND_GET_PROCESSES, COMMAND_GET_SNAPSHOT,
+    COMMAND_LIST_ACTIONS, COMMAND_PREVIEW_ACTION, COMMAND_RESTORE_ACTION,
+    COMMAND_SUBSCRIBE_SNAPSHOTS, PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -33,6 +36,10 @@ pub struct DispatchContext<'a> {
     /// inert mode/profile/exclusions material `GetConfig` serves. Built once
     /// from the loaded configuration at agent start.
     pub config: ConfigSummary,
+    /// The policy gate when the agent was started with one (`None` =
+    /// policy-stage commands answer `Unsupported`, exactly like older
+    /// agents). Startup is always disabled inside the gate.
+    pub policy: Option<&'a PolicyGate>,
 }
 
 /// The configuration material `GetConfig` serves (RS-012 UI portion): the
@@ -171,12 +178,185 @@ pub fn dispatch(envelope: &RequestEnvelope, context: &DispatchContext<'_>) -> Re
                 "this agent does not serve process inventories".to_string(),
             ),
         },
+        COMMAND_PREVIEW_ACTION
+        | COMMAND_CONFIRM_ACTION
+        | COMMAND_RESTORE_ACTION
+        | COMMAND_DISABLE_ACTIONS => match context.policy {
+            None => Response::error(
+                &envelope.request_id,
+                context.instance_id,
+                ErrorCode::Unsupported,
+                "this agent was started without the policy gate".to_string(),
+            ),
+            Some(gate) => {
+                let outcome = match envelope.command.as_str() {
+                    COMMAND_PREVIEW_ACTION => {
+                        match envelope
+                            .payload
+                            .as_ref()
+                            .cloned()
+                            .map(
+                                serde_json::from_value::<ramshaper_core::ipc::PreviewActionRequest>,
+                            )
+                            .transpose()
+                        {
+                            Ok(Some(request)) => {
+                                let pressure = pressure_level_of(context.latest);
+                                let now = ramshaper_core::SystemClock.unix_epoch_ms();
+                                gate.preview(&request, pressure, now)
+                            }
+                            Ok(None) | Err(_) => ResponseData::error(
+                                ErrorCode::InvalidArgument,
+                                "PreviewAction requires a PreviewActionRequest payload",
+                            ),
+                        }
+                    }
+                    COMMAND_CONFIRM_ACTION => {
+                        match envelope
+                            .payload
+                            .as_ref()
+                            .cloned()
+                            .map(
+                                serde_json::from_value::<ramshaper_core::ipc::ConfirmActionRequest>,
+                            )
+                            .transpose()
+                        {
+                            Ok(Some(request)) => {
+                                let now = ramshaper_core::SystemClock.unix_epoch_ms();
+                                gate.confirm(&request, now)
+                            }
+                            Ok(None) | Err(_) => ResponseData::error(
+                                ErrorCode::InvalidArgument,
+                                "ConfirmAction requires a ConfirmActionRequest payload",
+                            ),
+                        }
+                    }
+                    COMMAND_RESTORE_ACTION => {
+                        match envelope
+                            .payload
+                            .as_ref()
+                            .cloned()
+                            .map(
+                                serde_json::from_value::<ramshaper_core::ipc::RestoreActionRequest>,
+                            )
+                            .transpose()
+                        {
+                            Ok(Some(request)) => {
+                                let now = ramshaper_core::SystemClock.unix_epoch_ms();
+                                gate.restore(&request, now)
+                            }
+                            Ok(None) | Err(_) => ResponseData::error(
+                                ErrorCode::InvalidArgument,
+                                "RestoreAction requires a RestoreActionRequest payload",
+                            ),
+                        }
+                    }
+                    _ => {
+                        match envelope
+                            .payload
+                            .as_ref()
+                            .cloned().map(serde_json::from_value::<ramshaper_core::ipc::DisableActionsRequest>)
+                            .transpose()
+                        {
+                            Ok(Some(request)) => {
+                                let now = ramshaper_core::SystemClock.unix_epoch_ms();
+                                gate.disable(&request, now)
+                            }
+                            Ok(None) | Err(_) => ResponseData::error(
+                                ErrorCode::InvalidArgument,
+                                "DisableActions requires a DisableActionsRequest payload",
+                            ),
+                        }
+                    }
+                };
+                outcome.into_response(envelope, context.instance_id)
+            }
+        },
         other => Response::error(
             &envelope.request_id,
             context.instance_id,
             ErrorCode::Unsupported,
             format!("unknown command '{other}'"),
         ),
+    }
+}
+
+/// Classify the newest snapshot's pressure for the policy gate: missing or
+/// malformed evidence is `Unknown` (never guessed) — the preview then
+/// answers "pressure not elevated".
+fn pressure_level_of(latest: Option<&LatestSnapshot>) -> ramshaper_core::pressure::PressureLevel {
+    use ramshaper_core::pressure::PressureLevel;
+    let Some(latest) = latest else {
+        return PressureLevel::Unknown;
+    };
+    match latest
+        .snapshot
+        .get("pressure")
+        .and_then(|p| p.get("level"))
+        .and_then(|level| level.as_str())
+    {
+        Some("elevated") => PressureLevel::Elevated,
+        Some("normal") => PressureLevel::Normal,
+        _ => PressureLevel::Unknown,
+    }
+}
+
+#[cfg(test)]
+mod policy_dispatch_tests {
+    use super::*;
+    use ramshaper_core::ipc::{
+        RequestEnvelope, COMMAND_CONFIRM_ACTION, COMMAND_DISABLE_ACTIONS, COMMAND_PREVIEW_ACTION,
+        COMMAND_RESTORE_ACTION,
+    };
+
+    fn envelope(seq: u32, command: &str) -> RequestEnvelope {
+        RequestEnvelope {
+            protocol_version: PROTOCOL_VERSION,
+            request_id: format!("r{seq}"),
+            agent_instance_id: None,
+            command: command.to_string(),
+            payload: None,
+        }
+    }
+
+    fn ctx() -> DispatchContext<'static> {
+        DispatchContext {
+            instance_id: "agent-1",
+            capabilities: json!({}),
+            latest: None,
+            max_age_ms: 2000,
+            now_monotonic_ms: 0,
+            processes: ProcessesContext::NotSupported,
+            config: ConfigSummary {
+                mode: "observe_only".to_string(),
+                profile: "balanced".to_string(),
+                exclusions: vec![],
+            },
+            policy: None,
+        }
+    }
+
+    #[test]
+    fn policy_commands_answer_unsupported_without_a_gate() {
+        for command in [
+            COMMAND_PREVIEW_ACTION,
+            COMMAND_CONFIRM_ACTION,
+            COMMAND_RESTORE_ACTION,
+            COMMAND_DISABLE_ACTIONS,
+        ] {
+            let response = dispatch(&envelope(1, command), &ctx());
+            assert!(!response.ok, "{command} must not succeed without a gate");
+            let error = response.error.expect("error");
+            assert_eq!(error.code, ErrorCode::Unsupported, "{command}");
+            assert!(error.message.contains("policy gate"));
+        }
+    }
+
+    #[test]
+    fn still_unknown_commands_stay_unsupported() {
+        let response = dispatch(&envelope(2, "SetPriorityClass"), &ctx());
+        assert!(!response.ok);
+        assert_eq!(response.error.expect("error").code, ErrorCode::Unsupported);
     }
 }
 
@@ -209,6 +389,7 @@ mod tests {
             now_monotonic_ms: 0,
             processes: ProcessesContext::NotSupported,
             config: config_summary(),
+            policy: None,
         };
         let response = dispatch(&envelope(2, "GetSnapshot"), &ctx);
         assert!(!response.ok);
@@ -227,6 +408,7 @@ mod tests {
             now_monotonic_ms: 0,
             processes: ProcessesContext::NotSupported,
             config: config_summary(),
+            policy: None,
         };
         let caps = dispatch(&envelope(1, "GetCapabilities"), &ctx);
         assert!(caps.ok);
@@ -256,6 +438,7 @@ mod tests {
             now_monotonic_ms: 5_500,
             processes: ProcessesContext::NotSupported,
             config: config_summary(),
+            policy: None,
         };
         let response = dispatch(&envelope(1, "GetSnapshot"), &ctx);
         assert!(response.ok);
@@ -279,6 +462,7 @@ mod tests {
             now_monotonic_ms: 9_000,
             processes: ProcessesContext::NotSupported,
             config: config_summary(),
+            policy: None,
         };
         let response = dispatch(&envelope(1, "GetSnapshot"), &ctx);
         assert!(!response.ok);
@@ -295,6 +479,7 @@ mod tests {
             now_monotonic_ms: 0,
             processes: ProcessesContext::NotSupported,
             config: config_summary(),
+            policy: None,
         };
         let response = dispatch(&envelope(1, "GetSnapshot"), &none_ctx);
         assert!(!response.ok);
@@ -314,6 +499,7 @@ mod tests {
             now_monotonic_ms: 0,
             processes: ProcessesContext::NotSupported,
             config: config_summary(),
+            policy: None,
         };
         let sub = dispatch(&envelope(1, "SubscribeSnapshots"), &ctx);
         assert!(sub.ok);
@@ -335,6 +521,7 @@ mod tests {
             now_monotonic_ms: 0,
             processes: ProcessesContext::NotSupported,
             config: config_summary(),
+            policy: None,
         };
         let response = dispatch(&envelope(1, "GetCapabilities"), &ctx);
         assert_eq!(response.request_id, "r-1");
@@ -355,6 +542,7 @@ mod tests {
             now_monotonic_ms: 0,
             processes: ProcessesContext::Ready(&inventory),
             config: config_summary(),
+            policy: None,
         };
         let response = dispatch(&envelope(1, "GetProcesses"), &ctx);
         assert!(response.ok);
@@ -373,6 +561,7 @@ mod tests {
             now_monotonic_ms: 0,
             processes: ProcessesContext::Failed("scan failed: OS error 299"),
             config: config_summary(),
+            policy: None,
         };
         let response = dispatch(&envelope(1, "GetProcesses"), &ctx);
         assert!(!response.ok);
@@ -404,6 +593,7 @@ mod tests {
                 profile: "low_ram".to_string(),
                 exclusions: vec![],
             },
+            policy: None,
         };
         let response = dispatch(&envelope(1, "GetConfig"), &ctx);
         assert!(response.ok);
@@ -441,6 +631,7 @@ processes = [\"a.exe\"]
             now_monotonic_ms: 0,
             processes: ProcessesContext::NotSupported,
             config: config_summary(),
+            policy: None,
         };
         let response = dispatch(&envelope(1, "GetProcesses"), &ctx);
         assert!(!response.ok);
