@@ -1,0 +1,42 @@
+# RS-026 bench-boundary review — probes (2026-10-26)
+
+## Static
+- Dependency diff 56c4010..169f0fe (Cargo.toml, bench Cargo.toml): EMPTY — no new crates or features since the policy-stage review.
+- Network API grep over workload.rs/analysis.rs/prereg.rs (TcpStream|UdpSocket|std::net|tokio|reqwest|hyper): none.
+- Closed schema: #[serde(deny_unknown_fields)] on Preregistration and every Frozen* struct (verified in source).
+
+## Live: prereg boundary on the real binary (release build)
+
+### 1. parse-time refusals (plan.json attempts)
+missing declared_at_utc -> exit 2: 'invalid preregistration: missing field declared_at_utc'
+
+### 2. CLI-defaults mismatch refusal (workload-ab, plan froze pilot_blocks 2 / order_seed X)
+exit 2; BOTH deviations named:
+  workload pilot: 2 AB/BA blocks x 100 events (warmup 10, task iters 200000, seed 12317062951898631936) - observe-only treatment
+  executed 2 blocks (2 complete) in 0.6 s
+
+### 3. FINDING (fixed in this review): the plan's analysis section was never honored on the runner
+workload-ab verified only the workload section and analyzed with hardcoded defaults
+(resamples 10000, default seed, default guardrails) — a plan freezing resamples 500 was
+silently analyzed at 10000. analyze-ab refused deviations but had no way to HONOR a
+non-default plan. Fix: with a plan, BOTH tools now build BootstrapConfig + Guardrails
+FROM the plan (the plan is the authority) and verify_analysis gates min_blocks_confirmatory
+against this build's fixed threshold — a plan freezing another value is refused, never
+silently ignored. Live verification:
+  plan (resamples 10000, seed 42, guardrails 10/25) -> workload-ab exit 0, summary shows
+    resamples 10000 | seed 42 (the plan values, executed)
+  plan freezing min_blocks 12 (this build fixes 5) -> exit 2:
+    preregistration deviation: thresholds.min_blocks_confirmatory: planned 12, attempted 5
+    error: the frozen analysis section of target/rs026-bench/plan-unhonorable.json cannot be honored by this build;                      refusing (a plan must freeze what the executable does)
+  analyze-ab with the honored plan -> exit 0, label Regression, resamples 10000 seed 42
+  analyze-ab with --seed 999 -> exit 2, both deviations named (resamples default + seed)
+    preregistration deviation: bootstrap.resamples: planned 500, attempted 10000
+    preregistration deviation: bootstrap.seed: planned 42, attempted 999
+
+## Adversarial in-process tests (bench/tests/boundary.rs, 6 passed)
+- closed_schema_refuses_unknown_fields (typo'd field name, wrong schema marker)
+- structural_rules_refuse_at_parse (empty declaration, 99 events, 0% benefit)
+- every_workload_deviation_is_named_not_just_the_first (5 simultaneous deviations, all named)
+- analysis_deviations_are_named... (defaults deviate in 3 params; plan-honoring construction verifies)
+- a_plan_freezing_a_nondefault_confirmatory_threshold_is_refused
+- order_seed_reroll_is_a_named_deviation (the 0.3.38 re-roll refusal, planned vs attempted)

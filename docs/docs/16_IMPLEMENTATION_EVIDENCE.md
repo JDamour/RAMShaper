@@ -2129,3 +2129,57 @@ percentile; the concurrent session's 0.3.34–0.3.37 increments included).
 actuation consent), RS-024 Stage C plan generation in the wizard, and the
 preregistration's declared_at ordering versus collection (operator
 discipline, documented).
+
+---
+
+# RS-026 continuation — bench-crate boundary review, 2026-10-26
+
+**Scope reviewed** (surfaces landed since the 0.3.34 review): the RS-024
+Stage B runner (`workload.rs`), the AT-20 analysis (`analysis.rs`) and
+executable trial preregistration (`prereg.rs`, 0.3.38).
+
+**Static checks** (evidence
+`docs/evidence/2026-10-26-rs026-bench-boundary/probes.txt`): no
+dependency changes since 0.3.34 (empty Cargo diff); no network APIs in
+any bench module; the preregistration schema is genuinely closed
+(`#[serde(deny_unknown_fields)]` on every struct).
+
+**Boundary FINDING, fixed in this review:** the frozen plan was not the
+authority for the executed trial. `workload-ab` verified only the
+*workload* section and then ran the internal analysis with hardcoded
+defaults — a plan freezing `resamples: 500` was silently analyzed at
+10,000 with default seed and default guardrails. `analyze-ab` refused
+deviations (loud, correct) but had no way to *honor* a non-default plan
+(its config was defaults plus `--seed`). Fix (both tools, in
+`main.rs`): with a plan present, `BootstrapConfig` and `Guardrails` are
+built **from the plan** — the executed analysis matches the frozen one —
+and `verify_analysis` gates `min_blocks_confirmatory` against this
+build's fixed threshold, so a plan freezing a different value is
+*refused* (`thresholds.min_blocks_confirmatory: planned 12, attempted
+5`), never silently ignored or silently honored. Verified live: an
+honored plan runs with `summary.resamples = 10000, seed = 42` (the
+plan's values); the un-honorable plan exits 2; seed deviations still
+name both parameters. Supporting restructure: the bench crate gained a
+`lib.rs` exposing the three modules (standard pattern so integration
+tests can exercise the same surface the binary uses; `main.rs` paths
+unchanged via one `use`).
+
+**Adversarial in-process tests** (`tests/boundary.rs`, 6 passed): closed
+schema refuses unknown fields and wrong schema markers; structural rules
+refuse at parse (empty declaration, sub-p95 event count, non-positive
+benefit); **all five** simultaneous workload deviations are named (not
+just the first); the plan-honoring construction verifies while the
+defaults deviate in three named parameters; a non-default confirmatory
+threshold refuses; the order-seed re-roll (0.3.38's contract) is a named
+deviation with planned vs attempted values.
+
+**Gates (2026-10-26):** bench 30 lib/worker tests + 6 boundary tests, 0
+failed; clippy `-D warnings` clean; the other six crates 291/0. The
+agent crate's in-flight compile error at gate time is the parallel
+session's uncommitted work (touched minutes earlier; recorded, not
+touched — their policy_ipc.rs/guardrails.rs/policy_loop.rs edits are in
+flight).
+
+**Not covered:** the sibling's in-flight guardrails/policy_loop changes
+(reviewed when they land); owner-gated cohort claims remain out of scope
+for this machine.

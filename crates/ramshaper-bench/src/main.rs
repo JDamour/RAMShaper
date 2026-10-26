@@ -13,9 +13,7 @@
 
 #![deny(unsafe_code)]
 
-pub mod analysis;
-pub mod prereg;
-pub mod workload;
+use ramshaper_bench::{analysis, prereg, workload};
 
 use std::process::ExitCode;
 use std::time::Instant;
@@ -338,25 +336,59 @@ fn run_workload_ab(
     }
     let blocks = blocks.unwrap_or(10); // doc 08 §3 pilot minimum
                                        // Frozen plan: the trial may not deviate from it (doc 08 §4).
-    if let Some(path) = prereg_path {
-        let parsed = match load_preregistration(path) {
-            Ok(parsed) => parsed,
-            Err(message) => {
-                eprintln!("error: {message}");
+                                       // The plan's analysis section is the authority for the analysis this
+                                       // run performs: the bootstrap and guardrails below are built FROM the
+                                       // plan, so the executed analysis matches the frozen one instead of
+                                       // silently using defaults. `min_blocks_confirmatory` is this build's
+                                       // fixed confirmatory threshold — a plan freezing another value is
+                                       // refused, never silently ignored.
+    let parsed_plan = match prereg_path {
+        Some(path) => {
+            let parsed = match load_preregistration(path) {
+                Ok(parsed) => parsed,
+                Err(message) => {
+                    eprintln!("error: {message}");
+                    return ExitCode::from(2);
+                }
+            };
+            if let Err(deviations) = prereg::verify_workload(&parsed, &spec, blocks) {
+                for deviation in &deviations {
+                    eprintln!("preregistration deviation: {deviation}");
+                }
+                eprintln!(
+                    "error: the run deviates from the frozen preregistration {}; refusing",
+                    path.display()
+                );
                 return ExitCode::from(2);
             }
-        };
-        if let Err(deviations) = prereg::verify_workload(&parsed, &spec, blocks) {
-            for deviation in &deviations {
-                eprintln!("preregistration deviation: {deviation}");
+            let plan_config = analysis::BootstrapConfig {
+                resamples: parsed.bootstrap.resamples,
+                seed: parsed.bootstrap.seed,
+            };
+            let plan_guardrails = analysis::Guardrails {
+                foreground_max_slowdown_pct: parsed.thresholds.foreground_max_slowdown_pct,
+                background_max_slowdown_pct: parsed.thresholds.background_max_slowdown_pct,
+            };
+            if let Err(deviations) = prereg::verify_analysis(
+                &parsed,
+                &plan_config,
+                &plan_guardrails,
+                analysis::MIN_BLOCKS_FOR_CONFIRMATORY,
+            ) {
+                for deviation in &deviations {
+                    eprintln!("preregistration deviation: {deviation}");
+                }
+                eprintln!(
+                    "error: the frozen analysis section of {} cannot be honored by this                      build; refusing (a plan must freeze what the executable does)",
+                    path.display()
+                );
+                return ExitCode::from(2);
             }
-            eprintln!(
-                "error: the run deviates from the frozen preregistration {}; refusing",
-                path.display()
-            );
-            return ExitCode::from(2);
+            Some((plan_config, plan_guardrails))
         }
-    }
+        None => None,
+    };
+
     let stop = stop_control();
     let noop = || {};
     eprintln!(
@@ -378,14 +410,20 @@ fn run_workload_ab(
         started.elapsed().as_secs_f64()
     );
     let analysis_blocks = into_analysis_blocks(&executed);
-    let config = analysis::BootstrapConfig {
-        seed: spec.seed,
-        ..analysis::BootstrapConfig::default()
+    let (config, guardrails) = match &parsed_plan {
+        Some((plan_config, plan_guardrails)) => (*plan_config, *plan_guardrails),
+        None => (
+            analysis::BootstrapConfig {
+                seed: spec.seed,
+                ..analysis::BootstrapConfig::default()
+            },
+            analysis::Guardrails::default(),
+        ),
     };
     let report = analysis::analyze(
         &analysis_blocks,
         &config,
-        &analysis::Guardrails::default(),
+        &guardrails,
         &analysis::SafetyReport {
             safety_failure: false,
             reasons: Vec::new(),
@@ -451,42 +489,60 @@ fn run_analyze_ab(
             return ExitCode::from(2);
         }
     };
-    let config = BootstrapConfig {
-        seed: seed.unwrap_or_else(|| BootstrapConfig::default().seed),
-        ..BootstrapConfig::default()
-    };
-    // Frozen plan: the analysis may not deviate from it (doc 08 §4).
-    if let Some(plan_path) = prereg_path {
-        let parsed = match load_preregistration(plan_path) {
-            Ok(parsed) => parsed,
-            Err(message) => {
-                eprintln!("error: {message}");
+    // Frozen plan: the analysis may not deviate from it (doc 08 §4). The
+    // plan is the authority for the analysis parameters — with a plan,
+    // the config and guardrails are built FROM it (a --seed that restates
+    // the frozen seed is accepted; any other value is a named refusal).
+    let (config, guardrails, _parsed_plan) = match prereg_path {
+        Some(plan_path) => {
+            let parsed = match load_preregistration(plan_path) {
+                Ok(parsed) => parsed,
+                Err(message) => {
+                    eprintln!("error: {message}");
+                    return ExitCode::from(2);
+                }
+            };
+            let plan_config = BootstrapConfig {
+                resamples: parsed.bootstrap.resamples,
+                seed: seed.unwrap_or(parsed.bootstrap.seed),
+            };
+            let plan_guardrails = Guardrails {
+                foreground_max_slowdown_pct: parsed.thresholds.foreground_max_slowdown_pct,
+                background_max_slowdown_pct: parsed.thresholds.background_max_slowdown_pct,
+            };
+            if let Err(deviations) = prereg::verify_analysis(
+                &parsed,
+                &plan_config,
+                &plan_guardrails,
+                analysis::MIN_BLOCKS_FOR_CONFIRMATORY,
+            ) {
+                for deviation in &deviations {
+                    eprintln!("preregistration deviation: {deviation}");
+                }
+                eprintln!(
+                    "error: the analysis deviates from the frozen preregistration {}; refusing",
+                    plan_path.display()
+                );
                 return ExitCode::from(2);
             }
-        };
-        if let Err(deviations) = prereg::verify_analysis(
-            &parsed,
-            &config,
-            &Guardrails::default(),
-            analysis::MIN_BLOCKS_FOR_CONFIRMATORY,
-        ) {
-            for deviation in &deviations {
-                eprintln!("preregistration deviation: {deviation}");
-            }
-            eprintln!(
-                "error: the analysis deviates from the frozen preregistration {}; refusing",
-                plan_path.display()
-            );
-            return ExitCode::from(2);
+            (plan_config, plan_guardrails, Some(parsed))
         }
-    }
+        None => (
+            BootstrapConfig {
+                seed: seed.unwrap_or_else(|| BootstrapConfig::default().seed),
+                ..BootstrapConfig::default()
+            },
+            Guardrails::default(),
+            None,
+        ),
+    };
     // Fixture analysis: this offline path feeds no safety observations
     // (the runner records them); the empty report keeps the label rules
     // fully exercisable without fabricating a pass.
     let report: AbReport = analyze(
         &blocks,
         &config,
-        &Guardrails::default(),
+        &guardrails,
         &SafetyReport {
             safety_failure: false,
             reasons: Vec::new(),
