@@ -2222,3 +2222,33 @@ suite passes in parallel mode after the fix.
 core/windows/agent; guardrails 9/0, windows 46/0, agent 61/0 serial;
 workspace **382 passed, 0 failed** parallel
 (`docs/evidence/2026-10-26-suspend-trigger/`). ADR-042.
+
+---
+
+# RS-027 slice 1 — provenance manifest + packaging/uninstall decisions, 2026-10-27
+
+**Scope implemented:** `scripts/provenance.ps1`, emitting a
+`ramshaper.provenance.v1` JSON manifest (toolchain versions, per-release-
+binary path/size/SHA-256, `Cargo.lock` hash, pinned toolchain file, git
+HEAD + working-tree state; BOM-less UTF-8 — PS 5.1's `Set-Content -Encoding
+UTF8` BOM was caught by JSON validation and fixed) — automating the
+artifact identification previously hand-copied into these records. Plus
+the packaging decisions recorded as decisions: distribution is the folder
+(no installer/service/task/Run-key — verified by the AT-23 privacy
+review), uninstall = stop processes + delete checkout + delete the
+operator-stated journal file (prefer clean-exit restoration first),
+login startup off by decision, code signing owner-gated. All of it is now
+in the user-facing [FAQ_AND_PRIVACY.md](../../FAQ_AND_PRIVACY.md)
+"Packaging, uninstall and provenance" section.
+
+**Live evidence** (`docs/evidence/2026-10-27-rs027-provenance/`):
+`provenance.json` generated at HEAD with all four release binaries
+(agent, bench, cli, ui), lockfile hash and git state.
+
+**RS-027 remaining (recorded):** the distribution decision itself,
+signing (owner; certificate procurement), and any installer/startup work
+that decision implies (new ADR required first).
+
+**Workspace gates:** manifest generated and JSON-validated; the script is
+read-only over the artifacts. Code unchanged — the workspace test/fmt/
+clippy state is the prior record's (0.3.40: 382 passed, 0 failed).

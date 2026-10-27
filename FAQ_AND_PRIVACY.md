@@ -127,3 +127,38 @@ an agent with a policy journal was running. Never attach memory dumps or
 process listings from sensitive machines without redacting first — and
 remember the tools are offline, so a report is *you* sending it, not
 RAMShaper.
+
+## Packaging, uninstall and provenance
+
+**What is on my disk?** The workspace checkout (sources + `target\`
+build output) and nothing else that RAMShaper put there. The tools are
+portable exes — no installer, no service, no scheduled task, no Run-key
+entry, no AppData writes. (Verified in the AT-23 privacy review.)
+
+**Where does the action journal live?** Exactly where the operator stated
+it: the agent only keeps a recovery journal when started with an explicit
+`--policy-journal <path>` — there is no default location and no
+configuration route. If you never passed that flag, no journal exists.
+
+**How do I uninstall?** Stop any running `ramshaper-*` processes, delete
+the checkout folder, and delete your journal file (the path you passed to
+`--policy-journal`) if one exists. The journal is the only retained
+recovery data — deleting it also deletes the record of how to restore any
+outstanding action, so prefer letting a running agent restore first
+(quitting it with Ctrl+C runs the clean-exit restoration). Nothing is
+left in the registry or the system otherwise.
+
+**Is login startup available?** No, by decision: RAMShaper never adds
+itself to startup, and no automatic startup path exists in this build.
+That is a deliberate safety choice (an unattended resident agent must
+come after the G3 evidence review), not an oversight.
+
+**How do I verify which build I have?** Run
+`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\provenance.ps1`
+from the workspace root: it writes `provenance.json` listing the
+toolchain, each release binary's SHA-256 and size, the lockfile hash and
+the git HEAD. Compare the hashes against the ones recorded in
+[16 — Implementation evidence](docs/docs/16_IMPLEMENTATION_EVIDENCE.md)
+or against a distribution you trust. Code signing is a separate,
+owner-gated decision (certificate procurement) and is not present in this
+build.

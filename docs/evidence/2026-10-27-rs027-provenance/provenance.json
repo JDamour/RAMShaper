@@ -1,0 +1,42 @@
+{
+    "schema":  "ramshaper.provenance.v1",
+    "generated_at_utc":  "2026-10-27T06:54:10Z",
+    "toolchain":  {
+                      "rustc":  "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+                      "cargo":  "cargo 1.93.1 (083ac5135 2025-12-15)"
+                  },
+    "lockfile":  {
+                     "cargo_lock_sha256":  "606e19dc6ddcb5121459faf9162d90d52ea96747a70ddc84b6e6ab233b9c3678",
+                     "rust_toolchain":  "[toolchain]\nchannel = \"1.93.1\"\nprofile = \"minimal\"\ncomponents = [\"rustfmt\", \"clippy\"]\ntargets = [\"x86_64-pc-windows-msvc\"]"
+                 },
+    "binaries":  [
+                     {
+                         "name":  "ramshaper-agent.exe",
+                         "path":  "F:\\_RAMShaper\\target\\x86_64-pc-windows-msvc\\release\\ramshaper-agent.exe",
+                         "size_bytes":  896000,
+                         "sha256":  "5e9abda1ce672958246105887ba47b3337a5a20592e9421260621f86ab9f21e5"
+                     },
+                     {
+                         "name":  "ramshaper-bench.exe",
+                         "path":  "F:\\_RAMShaper\\target\\x86_64-pc-windows-msvc\\release\\ramshaper-bench.exe",
+                         "size_bytes":  737280,
+                         "sha256":  "f9f38256e6561668c023b8a4c5d4cf1fd15356e0664620434ec4b0a21379610a"
+                     },
+                     {
+                         "name":  "ramshaper-cli.exe",
+                         "path":  "F:\\_RAMShaper\\target\\x86_64-pc-windows-msvc\\release\\ramshaper-cli.exe",
+                         "size_bytes":  739328,
+                         "sha256":  "97d7801d29b14606f6c7c160bd0add9aeefdbf85e716a8213295988cef0d5bf4"
+                     },
+                     {
+                         "name":  "ramshaper-ui.exe",
+                         "path":  "F:\\_RAMShaper\\target\\x86_64-pc-windows-msvc\\release\\ramshaper-ui.exe",
+                         "size_bytes":  13506048,
+                         "sha256":  "17a8cf0521298823df9a7a74085931d585ba1f9f19067f14357d5b67e98d7c10"
+                     }
+                 ],
+    "git":  {
+                "head":  "2310824db2649ab545547e154e5e2e3436eb692c",
+                "working_tree":  "dirty"
+            }
+}

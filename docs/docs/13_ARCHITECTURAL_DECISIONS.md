@@ -828,3 +828,35 @@ production path and a tested vocabulary entry; the experiment invalidates
 across sleep even when the wall-clock TTL alone would not catch a short
 sleep, with the suspend reason on the journal record for the RS-013
 history surface.
+
+## ADR-043: Packaging stays a folder + provenance manifest; startup off; signing owner-gated — Accepted (RS-027 slice 1, implemented 2026-10-27; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+
+**Context:** RS-027 (packaging/provenance, optional startup, signing
+decision, uninstall recovery) at a stage where the tools are portable exes
+built from a workspace, with no distribution decision made.
+
+**Decisions:**
+- **Provenance is a generated manifest, not prose**: `scripts/provenance.ps1`
+  emits `ramshaper.provenance.v1` (JSON, BOM-less UTF-8) — toolchain
+  versions, each release binary's path/size/SHA-256, the `Cargo.lock`
+  hash, the pinned toolchain file, and the git HEAD with working-tree
+  state. The evidence records' hand-copied hashes are superseded by this
+  (they remain as historical artifacts).
+- **Distribution is the folder**: no installer, no service, no scheduled
+  task, no Run-key entry. Uninstall = stop the processes, delete the
+  checkout, delete the journal file at the operator-stated
+  `--policy-journal` path (the only retained data; documented with the
+  prefer-clean-exit-first guidance). This is stated in the FAQ as a
+  decision, not a limitation of effort.
+- **Login startup is off by decision** and no startup path exists in the
+  build; an unattended resident agent must come after the G3 evidence
+  review. Any future startup mechanism is a new ADR.
+- **Code signing is owner-gated** (certificate procurement and identity);
+  verification until then is the provenance manifest against a trusted
+  copy.
+
+**Consequences:** RS-027's remaining scope is the distribution decision
+itself (owner) plus, if a release happens, the signing and installer work
+that decision implies. The uninstall contract's "tell the user the
+retained recovery location" is satisfied by the FAQ section plus the
+agent's journal-path-is-explicit design.
