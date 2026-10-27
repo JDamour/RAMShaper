@@ -2487,8 +2487,9 @@ promoting it to core happens when a consumer (RS-023) needs it there.
 
 **Workspace gates (2026-10-27):** windows crate fmt/clippy (`-D
 warnings`) clean, **54 passed / 0 failed** serially (38 lib + 15
-integration + 1 pipe probe). The sibling session's policy_ipc in-flight
-edits (guardrails Stage-B wiring) were in progress during this slice and
-were not touched; the RS-021-era flake fix in `policy_ipc.rs` (ping -n 5
-→ -n 30 under parallel load, attributed to the parallel session) folds
+integration + 1 pipe probe). The sibling session's in-flight
+edits (guardrails Stage-B wiring in core/windows eligibility surfaces)
+were in progress during this slice and were not touched; the RS-021-era
+flake fix on this module's compatibility test (`ping -n 5` → `-n 30`
+under parallel suite load, attributed to the parallel session) folds
 into this slice's commit.
