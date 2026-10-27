@@ -2323,3 +2323,49 @@ automate artifact identification (0.3.41).
 resources is **Passed** with recorded limitations; the remaining items are
 precisely the owner-gated set above. No automated work remains open on
 G3's own track.
+
+# RS-019 completion — `policies --dry-run` CLI command, 2026-10-27
+
+**Scope implemented:** the command RS-019 explicitly deferred ("not in
+this slice: the `policies --dry-run` CLI command") — contract 14 §8 names
+it and gates it on the capability existing, which the RS-019 engine (20
+tests, deterministic, zero OS writes) satisfied. `ramshaper-cli policies
+--dry-run [--json]` now runs the decision layer over a built-in
+**synthetic** trace (`ramshaper_core::policy::demo_trace`, 21 steps):
+pressure transitions including the 3-sample Unknown ramp and the missing-
+input reset, preview → confirm → simulated apply, idempotent replay, the
+one-action cap, external-conflict preservation, journal-unavailability
+blocking, an unknown-focus deny (reasons carried), preview expiry past
+the inclusive 30 s window, TTL resolution, a stray confirmation, and the
+disable path — every `PolicyDecision` variant and every `NoActionReason`
+in one pinned sequence.
+
+**Semantics discovered while pinning (recorded):** the pressure
+classifier stays `Unknown` until three consecutive valid samples (so a
+single elevated sample never offers); a `disable` step only acts on an
+**active** experiment — with only a preview pending it is a no-op and
+the preview re-offers with its id — so the demo trace confirms dry-4
+before disabling, which additionally covers `ResolveCause::Disabled`.
+The pinning test (`demo_trace_pins_the_full_decision_sequence`) is the
+executable spec of the printed output and asserts byte-identical
+determinism across runs.
+
+**Surface:** `--json` emits the versioned `ramshaper.policy-dryrun.v1`
+log verbatim; text mode carries a SYNTHETIC banner (contract §8 "fixture
+data must be marked synthetic"), per-step lines
+(`[i] ms pressure decision`) with stable machine codes, and the summary
+counts. Usage errors exit 2 (`policies` without `--dry-run`, the flag on
+other commands); the run itself exits 0 (§8: deterministic success).
+
+**Gates (2026-10-27):** fmt clean; clippy `-D warnings` clean on
+core+cli; core pinning test green; cli **9 parse + 22 binary passed,
+0 failed** incl. byte-identical determinism over the real binary, stdout/
+stderr separation and usage-error exits (`docs/evidence/2026-10-27-
+policies-dryrun-cli/test-run.txt`). **Workspace note:** the full-suite
+run recorded 2 failures in the sibling session's UNCOMMITTED in-flight
+`job.rs` compatibility tests (fail serially too — theirs to finish;
+recorded, not touched); every other crate green.
+
+**Not in this slice:** user-supplied trace files (a `--trace <file>`
+schema over `TargetObservation` — a future extension); the managed-
+launch `restore` command family (G4).

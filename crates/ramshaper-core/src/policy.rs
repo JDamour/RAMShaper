@@ -426,6 +426,97 @@ pub fn dry_run(config: &DryRunConfig<'_>, trace: &[TraceStep<'_>]) -> DryRunLog 
     }
 }
 
+/// The built-in deterministic demonstration trace for the
+/// `policies --dry-run` CLI command: 20 steps that walk the decision layer
+/// through every `PolicyDecision` variant and every `NoActionReason` —
+/// pressure transitions (including the 3-sample Elevated ramp), preview/
+/// confirm/apply, idempotent replay, the one-action cap, an external
+/// conflict, journal unavailability, an ineligible target, preview expiry
+/// past the inclusive 30 s window, TTL resolution, a stray confirmation
+/// and the disable path. Entirely synthetic: fixed times, no OS reads, no
+/// OS writes.
+#[must_use]
+pub fn demo_trace() -> Vec<TraceStep<'static>> {
+    const IMAGE: &str = "synthetic-app.exe";
+    let eligible = TargetObservation::all_pass();
+    let ineligible = TargetObservation {
+        focus: crate::eligibility::FocusObservation::Unknown {
+            reason: "synthetic unknown focus (unknown denies)".to_string(),
+        },
+        ..TargetObservation::all_pass()
+    };
+    let step = |monotonic_ms: u64,
+                low_memory: Option<bool>,
+                target: &TargetObservation,
+                confirm: bool,
+                disable: bool,
+                external: bool,
+                journal: bool| {
+        TraceStep {
+            monotonic_ms,
+            low_memory,
+            image_name: IMAGE,
+            target: target.clone(),
+            confirm,
+            disable,
+            external_priority_change: external,
+            config_invalidated: false,
+            journal_available: journal,
+        }
+    };
+    vec![
+        // 0: pressure observed but not elevated — nothing to optimize.
+        step(0, Some(false), &eligible, false, false, false, true),
+        // 1: pressure inputs missing/stale — Unknown, never guessed (and
+        //    the consecutive-count ramp resets).
+        step(500, None, &eligible, false, false, false, true),
+        // 2-3: the Elevated ramp needs three consecutive signaling
+        //      samples spanning 2 s; these two are still not Elevated.
+        step(1_000, Some(true), &eligible, false, false, false, true),
+        step(2_000, Some(true), &eligible, false, false, false, true),
+        // 4: Elevated + fully eligible target — a preview is offered.
+        step(3_000, Some(true), &eligible, false, false, false, true),
+        // 5: manual confirmation inside the window — durable prepare,
+        //    simulated apply (no OS write), live deadline = t + TTL.
+        step(3_100, Some(true), &eligible, true, false, false, true),
+        // 6: repeat confirmation — idempotent replay, no second apply.
+        step(3_200, Some(true), &eligible, true, false, false, true),
+        // 7: the one-action cap holds while the experiment is active.
+        step(3_300, Some(true), &eligible, false, false, false, true),
+        // 8: an external writer changed the property — Conflict preserved.
+        step(3_400, Some(true), &eligible, false, false, true, true),
+        // 9: journal unavailable blocks new applies (never recovery).
+        step(3_500, Some(true), &eligible, false, false, false, false),
+        // 10: an unknown focus observation denies eligibility, reasons
+        //     carried.
+        step(3_600, Some(true), &ineligible, false, false, false, true),
+        // 11: eligible again — a new preview is offered.
+        step(3_700, Some(true), &eligible, false, false, false, true),
+        // 12: confirmation 30.1 s later — past the inclusive 30 s window.
+        step(33_800, Some(true), &eligible, true, false, false, true),
+        // 13: a fresh preview replaces the expired one.
+        step(33_900, Some(true), &eligible, false, false, false, true),
+        // 14: confirmed in time — applied with a live deadline.
+        step(34_000, Some(true), &eligible, true, false, false, true),
+        // 15: the deadline passes — TTL expiry resolves to Restored (the
+        //     simulated apply never touched a real process).
+        step(154_050, Some(true), &eligible, false, false, false, true),
+        // 16: a confirmation with nothing pending is refused explicitly.
+        step(154_100, Some(true), &eligible, true, false, false, true),
+        // 17: one more preview…
+        step(154_200, Some(true), &eligible, false, false, false, true),
+        // 18: …confirmed — applied (the disable below then has an active
+        //     experiment to act on; a disable with only a preview pending
+        //     is a no-op by design).
+        step(154_250, Some(true), &eligible, true, false, false, true),
+        // 19: manual disable — restores the active experiment and stops
+        //     new previews for the rest of the trace.
+        step(154_300, Some(true), &eligible, false, true, false, true),
+        // 20: the disable stays in force.
+        step(154_400, Some(true), &eligible, false, false, false, true),
+    ]
+}
+
 /// Deterministic trigger precedence when several fire at once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Trigger {
@@ -1201,6 +1292,72 @@ mod tests {
                 "preview_expired",
                 "journal_unavailable",
             ]
+        );
+    }
+    #[test]
+    fn demo_trace_pins_the_full_decision_sequence() {
+        // The CLI demo trace must stay a complete, honest walk of the
+        // decision layer: every variant, in a pinned order. This test is
+        // the executable spec of what `policies --dry-run` prints.
+        let allowlist = Allowlist::new("eligibility-v1", &["SYNTHETIC-APP.EXE"]);
+        let log = run(&demo_trace(), &allowlist);
+        let codes: Vec<String> = log
+            .steps
+            .iter()
+            .map(|step| match &step.decision {
+                PolicyDecision::NoAction { reason } => {
+                    format!("no_action/{}", reason.code())
+                }
+                PolicyDecision::PreviewOffered { action_id, .. } => {
+                    format!("preview/{action_id}")
+                }
+                PolicyDecision::ApplySimulated { action_id, .. } => {
+                    format!("apply/{action_id}")
+                }
+                PolicyDecision::ActionResolved {
+                    action_id, cause, ..
+                } => format!("resolved/{}/{}", action_id, cause.code()),
+                PolicyDecision::ReplayIgnored { action_id } => {
+                    format!("replay/{action_id}")
+                }
+            })
+            .collect();
+        assert_eq!(
+            codes,
+            vec![
+                "no_action/pressure_unknown",
+                "no_action/pressure_unknown",
+                "no_action/pressure_unknown",
+                "no_action/pressure_unknown",
+                "preview/dry-1",
+                "apply/dry-1",
+                "replay/dry-1",
+                "no_action/action_active",
+                "resolved/dry-1/external_conflict",
+                "no_action/journal_unavailable",
+                "no_action/ineligible",
+                "preview/dry-2",
+                "no_action/preview_expired",
+                "preview/dry-3",
+                "apply/dry-3",
+                "resolved/dry-3/ttl_expired",
+                "no_action/no_valid_preview",
+                "preview/dry-4",
+                "apply/dry-4",
+                "resolved/dry-4/disabled",
+                "no_action/disabled",
+            ]
+        );
+        assert_eq!(log.summary.previews_offered, 4);
+        assert_eq!(log.summary.applies_simulated, 3);
+        assert_eq!(log.summary.actions_resolved, 3);
+        assert_eq!(log.summary.replays_ignored, 1);
+        assert_eq!(log.summary.no_actions, 10);
+        // Determinism: the same trace twice is byte-identical.
+        let again = run(&demo_trace(), &allowlist);
+        assert_eq!(
+            serde_json::to_string(&log).expect("serialize"),
+            serde_json::to_string(&again).expect("serialize")
         );
     }
 }

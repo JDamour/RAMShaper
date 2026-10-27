@@ -427,3 +427,49 @@ mod config_tests {
         assert!(stdout.contains("config import"), "stdout: {stdout}");
     }
 }
+
+#[test]
+fn policies_dry_run_json_is_schema_shaped_and_deterministic() {
+    let (code, stdout, stderr) = run(&["policies", "--dry-run", "--json"]);
+    assert_eq!(code, 0, "the dry run cannot fail at runtime");
+    assert!(stderr.is_empty(), "stdout carries data only: {stderr}");
+    assert!(
+        stdout.contains("ramshaper.policy-dryrun.v1"),
+        "versioned schema"
+    );
+    assert!(stdout.contains("\"previews_offered\""));
+    assert!(stdout.contains("dry-1"), "the deterministic action ids");
+    // Byte-identical on a second run (no clock, no OS input).
+    let (code2, stdout2, _) = run(&["policies", "--dry-run", "--json"]);
+    assert_eq!(code2, 0);
+    assert_eq!(
+        stdout, stdout2,
+        "the same trace must print byte-identical output"
+    );
+}
+
+#[test]
+fn policies_dry_run_text_carries_the_synthetic_banner_and_summary() {
+    let (code, stdout, stderr) = run(&["policies", "--dry-run"]);
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty(), "stdout carries data only: {stderr}");
+    assert!(
+        stdout.to_uppercase().contains("SYNTHETIC"),
+        "the synthetic marking must be in the output: {stdout}"
+    );
+    assert!(stdout.contains("schema ramshaper.policy-dryrun.v1"));
+    assert!(stdout.contains("no_action pressure_unknown"), "a deny step");
+    assert!(stdout.contains("preview dry-1"), "an offered preview");
+    assert!(stdout.contains("summary:"), "the aggregate counts");
+}
+
+#[test]
+fn policies_usage_errors_exit_two() {
+    let (code, stdout, stderr) = run(&["policies"]);
+    assert_eq!(code, 2, "missing --dry-run is a usage error");
+    assert!(stdout.is_empty(), "errors never go to stdout: {stdout}");
+    assert!(stderr.contains("--dry-run"), "{stderr}");
+    let (code, _, stderr) = run(&["--dry-run", "info"]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("--dry-run"), "{stderr}");
+}

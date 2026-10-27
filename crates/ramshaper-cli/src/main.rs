@@ -40,11 +40,23 @@ COMMANDS:
     info                 Print one system memory snapshot (with pressure state)
     low-memory-watch     Sample system memory + low-memory condition until Ctrl+C
     processes            List processes with memory, CPU and I/O (two-sample rates)
+    policies             Inspect the policy decision layer (dry run only)
     config               Validate, export or atomically import TOML configuration
 
 CONFIG USAGE:
     ramshaper-cli config export [--config <PATH>] <DEST>
     ramshaper-cli config import <SOURCE> --into <DEST>
+
+POLICIES USAGE:
+    ramshaper-cli policies --dry-run [--json]
+
+    Simulates the policy decision layer over a built-in SYNTHETIC trace:
+    no OS reads, no OS writes, no real process is touched. The trace walks
+    every decision (previews, applies, resolutions, refusals) with fixed
+    times; the same command always prints byte-identical output. A real
+    policy experiment requires the agent's typed console consent (the
+    `--policy-journal` flag on ramshaper-agent) and an allowlisted target
+    (none exist until RS-024 Stage B testing).
 
 `config export` writes validated TOML to DEST (defaults when --config is
 absent). `config import` validates SOURCE against the closed schema
@@ -91,6 +103,9 @@ pub struct CliArgs {
     /// [`watch_interval`]; `processes` resolves its own default).
     interval_ms: Option<u64>,
     stop_after_ms: Option<u64>,
+    /// Raw `--dry-run` flag; valid only for `policies` (its only mode —
+    /// the demo trace is synthetic by definition).
+    dry_run: bool,
     config_path: Option<PathBuf>,
 }
 
@@ -115,6 +130,7 @@ pub enum Command {
     Info,
     LowMemoryWatch,
     Processes,
+    Policies,
     Config(ConfigSpec),
 }
 
@@ -131,6 +147,7 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> ParseOutcome {
     let mut args = args.into_iter().peekable();
     let mut command: Option<Command> = None;
     let mut json = false;
+    let mut dry_run = false;
     let mut interval_ms: Option<u64> = None;
     let mut stop_after_ms: Option<u64> = None;
     let mut config_path: Option<PathBuf> = None;
@@ -142,6 +159,7 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> ParseOutcome {
             "--version" | "-V" => return ParseOutcome::Version,
             "--help" | "-h" => return ParseOutcome::Help,
             "--json" => json = true,
+            "--dry-run" => dry_run = true,
             "--config" => match args.next() {
                 Some(value) => config_path = Some(PathBuf::from(value)),
                 None => return ParseOutcome::UsageError("--config requires a path".into()),
@@ -214,6 +232,7 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> ParseOutcome {
             "info" if command.is_none() => command = Some(Command::Info),
             "low-memory-watch" if command.is_none() => command = Some(Command::LowMemoryWatch),
             "processes" if command.is_none() => command = Some(Command::Processes),
+            "policies" if command.is_none() => command = Some(Command::Policies),
             other => {
                 // The config subcommand takes positional paths: export has a
                 // single destination; import takes the source file (the
@@ -251,6 +270,14 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> ParseOutcome {
     if stop_after_ms.is_some() && command != Command::LowMemoryWatch {
         return ParseOutcome::UsageError(
             "--stop-after-ms is only valid for low-memory-watch".into(),
+        );
+    }
+    if dry_run && command != Command::Policies {
+        return ParseOutcome::UsageError("--dry-run is only valid for policies".into());
+    }
+    if command == Command::Policies && !dry_run {
+        return ParseOutcome::UsageError(
+            "policies requires --dry-run (the only supported mode)".into(),
         );
     }
     if let Command::Config(spec) = &command {
@@ -297,6 +324,7 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> ParseOutcome {
         json,
         interval_ms,
         stop_after_ms,
+        dry_run,
         config_path,
     })
 }
@@ -314,7 +342,7 @@ fn main() -> ExitCode {
         }
         ParseOutcome::UsageError(message) => {
             eprintln!("error: {message}");
-            eprintln!("usage: {TOOL_NAME} <info|low-memory-watch|processes|config> [--json] [--interval-ms <ms>] [--stop-after-ms <ms>] [--config <path>] [--into <path>]");
+            eprintln!("usage: {TOOL_NAME} <info|low-memory-watch|processes|policies|config> [--json] [--interval-ms <ms>] [--stop-after-ms <ms>] [--dry-run] [--config <path>] [--into <path>]");
             eprintln!("run '{TOOL_NAME} --help' for details");
             ExitCode::from(2)
         }
@@ -455,6 +483,7 @@ fn run(args: CliArgs) -> ExitCode {
             args.json,
             args.interval_ms.unwrap_or(DEFAULT_PROCESS_INTERVAL_MS),
         ),
+        Command::Policies => run_policies(args.json),
     }
 }
 
@@ -625,6 +654,108 @@ fn run_watch_command(json: bool, interval_ms: u64, stop_after_ms: Option<u64>) -
 }
 
 #[cfg(windows)]
+/// `policies --dry-run`: the deterministic RS-019 decision walk over the
+/// built-in synthetic trace (contract 14 §8). No OS reads, no OS writes,
+/// no clock — the same trace always produces byte-identical output. The
+/// allowlist carries only the trace's own synthetic image (production
+/// allowlists stay empty until RS-024 Stage B evidence exists).
+fn run_policies(json: bool) -> ExitCode {
+    let rules = ramshaper_core::policy::PolicyRules::default_experiment();
+    let allowlist = ramshaper_core::eligibility::Allowlist::new(
+        rules.rules_version.as_str(),
+        &["SYNTHETIC-APP.EXE"],
+    );
+    let identity = ramshaper_core::identity::ProcessIdentity::new(4242, 133_000_000_000_000_000);
+    let config = ramshaper_core::policy::DryRunConfig {
+        rules: &rules,
+        allowlist: &allowlist,
+        user_exclusions: &[],
+        target_identity: &identity,
+    };
+    let log = ramshaper_core::policy::dry_run(&config, &ramshaper_core::policy::demo_trace());
+
+    if json {
+        match serde_json::to_string_pretty(&log) {
+            Ok(out) => println!("{out}"),
+            Err(e) => {
+                eprintln!("error: failed to serialize the dry-run log: {e}");
+                return ExitCode::from(1);
+            }
+        }
+    } else {
+        println!("policies --dry-run: SYNTHETIC trace — no OS reads, no OS writes");
+        println!(
+            "schema {} (rules {}, pressure {})",
+            log.schema, log.rules_version, log.pressure_rule_version
+        );
+        for step in &log.steps {
+            println!("{}", render_dry_run_step(step));
+        }
+        let s = &log.summary;
+        println!(
+            "summary: {} previews offered, {} applies simulated, {} resolved, {} replays ignored, {} no-action steps",
+            s.previews_offered, s.applies_simulated, s.actions_resolved, s.replays_ignored, s.no_actions
+        );
+    }
+    // Deterministic success: the dry run cannot fail at runtime (§8 exit
+    // codes; a usage error already exited 2 during parsing).
+    ExitCode::SUCCESS
+}
+
+/// One human-readable decision line.
+fn render_dry_run_step(step: &ramshaper_core::policy::StepDecision) -> String {
+    use ramshaper_core::policy::PolicyDecision;
+    let decision = match &step.decision {
+        PolicyDecision::NoAction { reason } => {
+            let detail = match reason {
+                ramshaper_core::policy::NoActionReason::ActionActive { action_id } => {
+                    format!(" ({action_id} outstanding)")
+                }
+                ramshaper_core::policy::NoActionReason::Ineligible { denies } => format!(
+                    " ({})",
+                    denies
+                        .iter()
+                        .map(|d| d.code().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                ramshaper_core::policy::NoActionReason::PreviewExpired {
+                    offered_at_ms,
+                    confirmed_at_ms,
+                } => format!(" (offered {offered_at_ms}, confirmed {confirmed_at_ms})"),
+                _ => String::new(),
+            };
+            format!("no_action {}{detail}", reason.code())
+        }
+        PolicyDecision::PreviewOffered {
+            action_id, ttl_ms, ..
+        } => format!("preview {action_id} (ttl {ttl_ms} ms; confirmation required)"),
+        PolicyDecision::ApplySimulated {
+            action_id,
+            deadline_monotonic_ms,
+        } => format!("apply {action_id} (simulated; deadline {deadline_monotonic_ms} ms)"),
+        PolicyDecision::ActionResolved {
+            action_id,
+            cause,
+            final_state,
+        } => format!(
+            "resolved {action_id} ({} -> {:?})",
+            cause.code(),
+            final_state
+        ),
+        PolicyDecision::ReplayIgnored { action_id } => {
+            format!("replay {action_id} (already applied; no second write)")
+        }
+    };
+    format!(
+        "[{:>2}] {:>7} ms  {:<9}  {}",
+        step.step,
+        step.monotonic_ms,
+        step.pressure_level.as_str(),
+        decision
+    )
+}
+
 fn run_processes(json: bool, interval_ms: u64) -> ExitCode {
     use ramshaper_platform::ReadOnlyProcessMonitor as _;
     use ramshaper_windows::WindowsSystemMonitor;
@@ -831,6 +962,7 @@ mod tests {
             json: false,
             interval_ms: Some(interval),
             stop_after_ms: None,
+            dry_run: false,
             config_path: None,
         }
     }
@@ -843,6 +975,7 @@ mod tests {
             json: false,
             interval_ms: None,
             stop_after_ms: None,
+            dry_run: false,
             config_path: None,
         }
     }
@@ -1020,5 +1153,41 @@ mod tests {
     fn help_documents_new_commands() {
         assert!(HELP.contains("processes"));
         assert!(HELP.contains("--config"));
+    }
+
+    #[test]
+    fn policies_requires_dry_run_and_vice_versa() {
+        // The command's only mode is the synthetic dry run.
+        assert!(matches!(
+            parse(&["policies"]),
+            ParseOutcome::UsageError(ref m) if m.contains("--dry-run")
+        ));
+        assert!(matches!(
+            parse(&["--dry-run", "info"]),
+            ParseOutcome::UsageError(ref m) if m.contains("--dry-run")
+        ));
+        assert!(matches!(
+            parse(&["info", "--dry-run"]),
+            ParseOutcome::UsageError(ref m) if m.contains("--dry-run")
+        ));
+        match parse(&["policies", "--dry-run"]) {
+            ParseOutcome::Run(args) => {
+                assert_eq!(args.command, Command::Policies);
+                assert!(args.dry_run);
+            }
+            other => panic!("policies --dry-run must parse: {other:?}"),
+        }
+        // Flag order does not matter.
+        assert!(matches!(
+            parse(&["--dry-run", "policies", "--json"]),
+            ParseOutcome::Run(_)
+        ));
+    }
+
+    #[test]
+    fn help_documents_the_policies_command() {
+        assert!(HELP.contains("policies"));
+        assert!(HELP.contains("--dry-run"));
+        assert!(HELP.contains("SYNTHETIC"));
     }
 }

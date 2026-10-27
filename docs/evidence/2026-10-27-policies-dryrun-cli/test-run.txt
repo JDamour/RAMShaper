@@ -1,0 +1,54 @@
+$ cargo test -p ramshaper-cli
+running 9 tests
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+running 22 tests
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.17s
+
+$ cargo test -p ramshaper-core policy::tests::demo_trace
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 188 filtered out; finished in 0.00s
+
+$ ramshaper-cli policies --dry-run (text, head)
+policies --dry-run: SYNTHETIC trace — no OS reads, no OS writes
+schema ramshaper.policy-dryrun.v1 (rules policy_v1, pressure pressure_v1)
+[ 0]       0 ms  unknown    no_action pressure_unknown
+[ 1]     500 ms  unknown    no_action pressure_unknown
+[ 2]    1000 ms  unknown    no_action pressure_unknown
+[ 3]    2000 ms  unknown    no_action pressure_unknown
+[ 4]    3000 ms  elevated   preview dry-1 (ttl 120000 ms; confirmation required)
+[ 5]    3100 ms  elevated   apply dry-1 (simulated; deadline 123100 ms)
+[ 6]    3200 ms  elevated   replay dry-1 (already applied; no second write)
+[ 7]    3300 ms  elevated   no_action action_active (dry-1 outstanding)
+[ 8]    3400 ms  elevated   resolved dry-1 (external_conflict -> Conflict)
+[ 9]    3500 ms  elevated   no_action journal_unavailable
+[10]    3600 ms  elevated   no_action ineligible (focus_unknown)
+[11]    3700 ms  elevated   preview dry-2 (ttl 120000 ms; confirmation required)
+[12]   33800 ms  elevated   no_action preview_expired (offered 3700, confirmed 33800)
+[13]   33900 ms  elevated   preview dry-3 (ttl 120000 ms; confirmation required)
+[14]   34000 ms  elevated   apply dry-3 (simulated; deadline 154000 ms)
+[15]  154050 ms  elevated   resolved dry-3 (ttl_expired -> Restored)
+[16]  154100 ms  elevated   no_action no_valid_preview
+[17]  154200 ms  elevated   preview dry-4 (ttl 120000 ms; confirmation required)
+[18]  154250 ms  elevated   apply dry-4 (simulated; deadline 274250 ms)
+[19]  154300 ms  elevated   resolved dry-4 (disabled -> Restored)
+[20]  154400 ms  elevated   no_action disabled
+summary: 4 previews offered, 3 applies simulated, 3 resolved, 1 replays ignored, 10 no-action steps
+
+$ ramshaper-cli policies --dry-run --json (head)
+{
+  "schema": "ramshaper.policy-dryrun.v1",
+  "rules_version": "policy_v1",
+  "pressure_rule_version": "pressure_v1",
+  "steps": [
+    {
+      "step": 0,
+      "monotonic_ms": 0,
+      "pressure_level": "unknown",
+      "decision": {
+        "NoAction": {
+          "reason": "PressureUnknown"
+
+$ ramshaper-cli policies (usage error)
+error: policies requires --dry-run (the only supported mode)
+usage: ramshaper-cli <info|low-memory-watch|processes|config> [--json] [--interval-ms <ms>] [--stop-after-ms <ms>] [--config <path>] [--into <path>]
+run 'ramshaper-cli --help' for details
+exit: 2
