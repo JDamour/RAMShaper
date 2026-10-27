@@ -2252,3 +2252,74 @@ that decision implies (new ADR required first).
 **Workspace gates:** manifest generated and JSON-validated; the script is
 read-only over the artifacts. Code unchanged — the workspace test/fmt/
 clippy state is the prior record's (0.3.40: 382 passed, 0 failed).
+
+---
+
+# G3 gate assessment — consolidated, 2026-10-27
+
+**Required cases:** G2 + AT-09–AT-14, AT-18, AT-20–AT-21, AT-23.
+**Additional exit conditions:** a synthetic workload A/B report; an
+eligibility allowlist; all recovery failures inspectable.
+
+## Case-by-case status
+
+| Case | Status | Evidence |
+|---|---|---|
+| AT-09 eligibility denials | **Passed** (pure + live) | RS-015 matrix: 11 named checks, every `Unknown` denies, explain-all reports; PolicyGate live tests (wrong instance/new identity/exclusions deny with reasons) |
+| AT-10 durable prepare → one verified write | **Passed** (pure + live) | Coordinator ordering test (durable `Prepared` asserted *during* the write); real actuator on a spawned `ping` child: Normal → Below Normal with read-back + independent confirmation, restored (0.3.24) |
+| AT-11 restore triggers | **Passed** (pure + live) | Restore engine: all 11 triggers, 1/5/30 s bounded retries, missed deadlines counted; live triggers: clean agent exit (0.3.33), session lock (0.3.37), suspend/resume (0.3.40), TTL + retry ticks (0.3.35), foreground via guardrails |
+| AT-12 crash reconciliation | **Passed** (pure + real store) | Reconcile-from-current-value (never reapply; reused PIDs zero writes; nothing inferred) over the real SQLite journal across restarts; optimistic state guard |
+| AT-13 external conflict | **Passed** | Third-value reconciliation → `Conflict` preserved untouched, pinned, surfaced via `ListActions` |
+| AT-14 cap / cooldown / children | **Passed** (pure + live, twice-stable) | Guardrails books + live child-inheritance probe (consented `powershell.exe` parent, spawned child observed → parent restored, finding recorded; 0.3.35) |
+| AT-18 storage faults | **Passed** (deterministic + adversarial) | Disk-full via page cap (typed `DiskFull`, recovery proceeds), clear-history retains pinned intent, newer-schema refusal untouched, quota blocks; +0.3.39 boundary-review adversarial probes |
+| AT-20 analysis fixtures | **Passed** | Hand-computed nearest-rank/paired/bootstrap fixtures; four doc-08 labels; deterministic seed replays |
+| AT-21 declared cohorts | **Not run — owner** | Cohort hardware unavailable; classification implemented and live-verified on the non-cohort baseline path (0.3.2/ADR-024) |
+| AT-23 privacy/offline | **Passed** (G2 portions + uninstall disclosure) | Offline/no-network review (0.3.13); identity-free config exports; uninstall disclosure + journal-location guidance (0.3.41 FAQ); journal serves only to the same user over the DACL'd pipe |
+
+## Exit conditions
+
+- **Synthetic workload A/B report:** machinery complete end to end
+  (`workload-ab` → counterbalanced pilot → preregistration enforcement →
+  `analysis` → labels; the observe-only pilot runs live). The **real**
+  report requires an owner-enabled trial (consent + a declared synthetic
+  workload) — **owner**.
+- **Eligibility allowlist:** intentionally empty; population requires
+  RS-024 Stage B compatibility testing on real workloads — **owner**.
+- **All recovery failures inspectable:** **Passed** — `Failed`,
+  `Uncertain`, `Conflict`, `TargetGone` and pinned `RestorePending` states
+  are journal records surfaced through `ListActions` and rendered verbatim
+  in the Actions UI; bounded retries and missed verification deadlines are
+  counted, never fabricated.
+
+## Prerequisites and blockers
+
+**G2 first.** G3 cannot be signed off until G2's own exit conditions
+close: the **Slint license decision** (owner pick — the UI links
+`slint 1.18.1` under its triple license today) and the **AT-19
+interactive pass** (human: Narrator quality, 1366×768, the 100–200 % DPI
+matrix; the automated portion is done). The Actions UI itself is complete
+(RS-013 first slice: history/pending/conflict rendering, restore and
+disable controls that answer explained refusals on gateless agents).
+
+**Owner actions standing between the current state and a G3 sign-off:**
+
+1. Slint license selection (G2 exit; owner).
+2. AT-19 interactive pass (human; checklist prepared in
+   `docs/design/2026-10-24-at19-interactive-checklist.md`).
+3. Enable the consent flow for a declared synthetic workload and run the
+   preregistered Stage B trial → the A/B report and the first allowlist
+   entries (owner; the machinery — consent, gate, workload, prereg,
+   analysis — is complete and tested; the treatment injection point is
+   `run_workload`'s closure).
+4. AT-21 cohort hardware (owner; no substitute is possible by design).
+
+**Not blocking, recorded:** the policy-loop ticker runs on a live 1 s
+feed with the journal as its input (0.3.35); session-lock and suspend
+triggers fire live (0.3.37/0.3.40); the preregistration enforcement makes
+the frozen-thresholds rule tamper-evident (0.3.38); provenance manifests
+automate artifact identification (0.3.41).
+
+**Assessment:** every G3 case that can be evidenced without owner
+resources is **Passed** with recorded limitations; the remaining items are
+precisely the owner-gated set above. No automated work remains open on
+G3's own track.

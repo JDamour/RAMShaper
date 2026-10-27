@@ -1,5 +1,9 @@
 # Documentation Changelog
 
+## 0.3.42 — 2026-10-27 (latest)
+
+- **Consolidated G3 gate assessment** in [16 — Implementation evidence](docs/16_IMPLEMENTATION_EVIDENCE.md): every G3 required case mapped to its evidence status — AT-09–AT-14, AT-18, AT-20 and AT-23 **Passed** (pure + live, with slice references), AT-21 **Not run — owner** (cohort hardware, no substitute possible), and the exit conditions resolved (A/B-report machinery complete, real report owner-gated; allowlist owner-gated by design; recovery-failures-inspectable **Passed**). Blockers to a G3 sign-off enumerated as exactly four owner/human actions (Slint license, AT-19 interactive pass, the consent-enabled Stage B trial, cohort hardware). **No automated work remains open on G3's own track.** Acceptance-matrix header note added.
+
 ## 0.3.41 — 2026-10-27 (latest)
 
 - **RS-027 slice 1 (provenance + packaging decisions)**: `scripts/provenance.ps1` emits a `ramshaper.provenance.v1` JSON manifest (toolchain versions, per-release-binary path/size/SHA-256, `Cargo.lock` hash, pinned toolchain, git HEAD + tree state; BOM-less UTF-8 after a PS 5.1 BOM was caught by JSON validation) — superseding the hand-copied evidence hashes. Packaging decisions recorded as decisions in the [FAQ](FAQ_AND_PRIVACY.md): distribution is the folder (no installer/service/task/Run-key), uninstall = stop processes + delete checkout + delete the operator-stated journal (prefer clean-exit restoration first), login startup off by decision, code signing owner-gated. Manifest + record in `docs/evidence/2026-10-27-rs027-provenance/`; ADR-043; RS-027 remainder (distribution/signing/installer) owner-gated. Record in [16 — Implementation evidence](docs/16_IMPLEMENTATION_EVIDENCE.md).
