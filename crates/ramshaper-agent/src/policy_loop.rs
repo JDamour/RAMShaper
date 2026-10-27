@@ -868,6 +868,64 @@ mod tests {
     }
 
     #[test]
+    fn a_second_restore_engine_on_a_terminal_record_writes_nothing() {
+        // RS-026 round-2 probe (gate-disable vs ticker interleave): two
+        // engines over one journal are the shipped shape (the gate's
+        // clean-exit disable + the ticker's pass). The first restore
+        // transitions the record to a terminal state, so the second finds
+        // NotRestorable — no second write, no error.
+        let journal = FakeJournal::default();
+        journal.seed_applied(4242, 500_000);
+        let mut actuator = FakeActuator::new(0x4000);
+        let identity = ProcessIdentity::new(4242, 133_000_000_000_000_000 + 4242);
+        let mut first = RestoreEngine::default();
+        let outcome = first.restore_once(
+            &journal,
+            &mut actuator,
+            &identity,
+            "act-4242",
+            ramshaper_core::coordinator::RestoreTrigger::Disable,
+            1_000,
+        );
+        assert!(
+            matches!(outcome, RestoreOutcome::Restored { .. }),
+            "{outcome:?}"
+        );
+        let mut second = RestoreEngine::default();
+        let outcome = second.restore_once(
+            &journal,
+            &mut actuator,
+            &identity,
+            "act-4242",
+            ramshaper_core::coordinator::RestoreTrigger::ForegroundReturned,
+            2_000,
+        );
+        assert_eq!(outcome, RestoreOutcome::NotRestorable);
+    }
+
+    #[test]
+    fn an_applied_record_cannot_survive_startup_recovery() {
+        // RS-026 round-2 probe (FocusStale-at-startup reachability): the
+        // feed fires staleness only when an APPLIED record is outstanding;
+        // a restore that fails during startup recovery must land the
+        // record in RestorePending (manual retry), never leave it Applied
+        // — so the stale trip cannot misfire on recovery residue.
+        let journal = FakeJournal::default();
+        journal.seed_applied(4242, 500_000);
+        let actuator = FakeActuator::new(0x4000);
+        // Reads never succeed during recovery: every retry path is taken.
+        *actuator.transient_reads.borrow_mut() = u32::MAX;
+        let mut loop_ = PolicyLoop::new(PolicyLoopConfig { enabled: true }, journal, actuator);
+        let resolved = loop_.startup_recovery(1_000);
+        assert_eq!(resolved, 0, "an unreadable target cannot be resolved");
+        assert_eq!(
+            loop_.outstanding_applied_identity(),
+            None,
+            "no Applied record may survive startup recovery"
+        );
+    }
+
+    #[test]
     fn outstanding_applied_identity_serves_the_safety_feed() {
         let journal = FakeJournal::default();
         journal.seed_applied(4242, 500_000);

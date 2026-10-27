@@ -473,3 +473,23 @@ fn policies_usage_errors_exit_two() {
     assert_eq!(code, 2);
     assert!(stderr.contains("--dry-run"), "{stderr}");
 }
+
+#[test]
+fn policies_still_requires_a_loadable_config_file() {
+    // RS-026 round-2 probe: the shared run() preamble loads and validates
+    // --config before ANY command — including the dry run, which does not
+    // consume config content. Pinned honestly: a broken config file exits
+    // 2 with the config error named, never a silently-run dry run.
+    let (code, stdout, stderr) = run(&[
+        "--config",
+        "Z:/ramshaper-review/definitely-missing.toml",
+        "policies",
+        "--dry-run",
+    ]);
+    assert_eq!(code, 2, "a missing config is a usage/configuration error");
+    assert!(stdout.is_empty(), "errors never go to stdout: {stdout}");
+    assert!(
+        stderr.contains("config"),
+        "the error must name the config file: {stderr}"
+    );
+}

@@ -9,6 +9,7 @@
 
 #![deny(unsafe_code)]
 
+use std::io::{BufRead as _, Read as _};
 use std::process::ExitCode;
 use std::sync::Arc;
 
@@ -326,7 +327,11 @@ fn serve_command(
                     ramshaper_agent::consent::CONSENT_WORD,
                 );
                 let mut line = String::new();
-                let read = std::io::stdin().read_line(&mut line);
+                // Bounded read: the consent word is 6 bytes, so a hostile
+                // or accidental oversized stdin line must not grow memory
+                // without limit (the bounded-memory rule; anything past
+                // 4 KiB is discarded unread).
+                let read = std::io::stdin().lock().take(4_096).read_line(&mut line);
                 let consented = match read {
                     Ok(0) => ramshaper_agent::consent::decide(None),
                     Ok(_) => ramshaper_agent::consent::decide(Some(&line)),

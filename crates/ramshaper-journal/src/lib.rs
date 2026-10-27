@@ -175,7 +175,13 @@ impl JournalStore {
     /// Open (creating if absent) the journal at `path`. A database with a
     /// schema version other than this build's, or an unreadable file, is
     /// refused without modification.
+    ///
+    /// `busy_timeout` is set so a second connection on the same file (a
+    /// diagnostics exporter, a future reader process) waits a bounded
+    /// 2 s behind this store's write instead of failing immediately with
+    /// `SQLITE_BUSY`, which would classify as an opaque `Db` fault.
     pub fn open(path: &Path) -> Result<Self, JournalError> {
+        const BUSY_TIMEOUT_MS: i64 = 2_000;
         let conn = Connection::open(path).map_err(|e| {
             // An unwritable/corrupt-at-open path must not look like success.
             match JournalError::classify(&e) {
@@ -183,6 +189,8 @@ impl JournalStore {
                 other => other,
             }
         })?;
+        conn.busy_timeout(std::time::Duration::from_millis(BUSY_TIMEOUT_MS as u64))
+            .map_err(|e| JournalError::classify(&e))?;
         let store = Self {
             conn: std::sync::Arc::new(Mutex::new(conn)),
         };

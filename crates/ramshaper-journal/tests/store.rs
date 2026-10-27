@@ -632,3 +632,65 @@ fn store_plugs_into_the_coordinator_trait() {
     assert_eq!(record.state, ActionState::Applied);
     assert_eq!(record.applied_deadline_unix_ms, Some(122_000));
 }
+
+#[test]
+fn a_second_handle_waits_behind_the_first_under_write_load() {
+    // RS-026 round-2 probe: the shipped agent shares ONE connection
+    // between gate and ticker (Arc<Mutex<Connection>>), but any second
+    // JournalStore::open on the same file — a diagnostics exporter, a
+    // future reader process — is a separate SQLite connection. Without a
+    // busy timeout, the reader fails immediately with SQLITE_BUSY while
+    // the first handle writes (classified as an opaque `Db` fault). The
+    // open-time `busy_timeout` makes the overlap a bounded wait instead:
+    // under this probe's concurrent load, neither handle may error.
+    use std::collections::BTreeSet;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("concurrent.sqlite");
+    let writer_store = JournalStore::open(&path).expect("writer handle");
+    let reader_store = JournalStore::open(&path).expect("reader handle");
+
+    const ITERATIONS: usize = 200;
+    let writer = std::thread::spawn(move || {
+        for i in 0..ITERATIONS {
+            writer_store
+                .record_prepared(&intent(&format!("conc-{i}")))
+                .expect("prepare under concurrent load");
+        }
+        ITERATIONS
+    });
+    let reader = {
+        let reader_store = reader_store.clone();
+        std::thread::spawn(move || {
+            let mut seen: BTreeSet<String> = BTreeSet::new();
+            for i in 0..ITERATIONS {
+                let id = format!("conc-{i}");
+                match reader_store.get(&id) {
+                    Ok(Some(record)) => {
+                        seen.insert(record.intent.action_id);
+                    }
+                    Ok(None) => {} // not written yet — a legitimate read
+                    Err(error) => panic!("the reader must never fault: {error:?}"),
+                }
+            }
+            seen
+        })
+    };
+
+    let written = writer.join().expect("writer thread");
+    let seen = reader.join().expect("reader thread");
+    // After both sides finish, every written record is readable and
+    // consistent (no lost or corrupted records).
+    let mut final_seen = BTreeSet::new();
+    for i in 0..ITERATIONS {
+        let id = format!("conc-{i}");
+        let record = reader_store
+            .get(&id)
+            .expect("post-run read")
+            .expect("record written by the other handle");
+        final_seen.insert(record.intent.action_id);
+    }
+    assert_eq!(written, ITERATIONS);
+    assert_eq!(final_seen.len(), ITERATIONS);
+    assert!(seen.len() <= final_seen.len());
+}

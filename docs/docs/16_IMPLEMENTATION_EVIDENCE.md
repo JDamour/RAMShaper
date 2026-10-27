@@ -2526,3 +2526,60 @@ failed runs are refused on re-run until cleaned.
 **Live evidence** (`docs/evidence/2026-10-27-at22-rerun-bundle/`): the
 demo bundle (fixture + regenerated report + preregistration demo plan)
 with working checksums and instructions, plus the guard's refusal.
+
+# RS-026 continuation round 2 — policy-surface boundary review, 2026-10-27
+
+**Surfaces reviewed (everything that changed since the 0.3.34 policy
+review):** the policy-loop ticker + server safety feed (0.3.35), the WTS
+session-lock adapter (0.3.37), the power/interrupt-time adapter + suspend
+path (0.3.40), the consent `--policy-journal` CLI path (0.3.33/0.3.38),
+and the `policies --dry-run` CLI (0.3.43).
+
+**Static findings (all clean or recorded):**
+- Dependency graph: **zero new crates** since 0.3.34 (`Cargo.lock` diff is
+  empty); exactly one new binding surface — the
+  `Win32_System_WindowsProgramming` feature on the pinned windows crate
+  (0.3.40, the two interrupt-time queries), the same audit class as
+  0.3.34's `Win32_System_JobObjects` finding;
+- `unsafe` remains confined to `ramshaper-windows` (`#![deny(unsafe_code)]`
+  everywhere else; verified by scan);
+- the shipped agent's gate and ticker share **one** SQLite connection
+  behind a mutex — no SQLITE_BUSY is reachable between them by
+  construction.
+
+**Finding 1 (fixed): unbounded consent stdin read.** The typed-consent
+prompt used `stdin().read_line`, which grows the line buffer without
+limit — a hostile or accidental oversized paste grows memory unboundedly
+on the operator console path. Fixed with a 4 KiB `Take` bound (the
+consent word is 6 bytes; anything beyond 4 KiB is discarded unread and
+cannot enable the session — a truncated prefix can never equal the strict
+consent word unless the real word was typed).
+
+**Finding 2 (fixed): a second journal handle had no busy timeout.** The
+gate/ticker share one connection, but `JournalStore::open` on the same
+file from another connection (diagnostics exporter, a future reader
+process) failed **immediately** with `SQLITE_BUSY` under write overlap —
+classified as an opaque `Db` fault with no retry semantics. Fixed with a
+bounded 2 s `busy_timeout` at open; the new probe
+(`a_second_handle_waits_behind_the_first_under_write_load`, journal
+crate) hammers 200 concurrent prepares+reads across two handles and
+requires zero faults on either side, plus full post-run consistency.
+
+**Probes that closed questions (pinned by test):**
+- `a_second_restore_engine_on_a_terminal_record_writes_nothing` — the
+  gate-disable vs ticker interleave: the second engine over an already
+  restored record finds `NotRestorable` (zero writes, no error);
+- `an_applied_record_cannot_survive_startup_recovery` — FocusStale at
+  startup is unreachable: a restore failing during recovery lands the
+  record in `RestorePending` (manual retry), never leaves it `Applied`,
+  so the staleness trip cannot misfire on recovery residue;
+- `policies_still_requires_a_loadable_config_file` — the shared run()
+  preamble validates `--config` before any command, including the dry
+  run that ignores config content: pinned exit 2 with the file named.
+
+**Gates (2026-10-27):** fmt clean; clippy `-D warnings` clean on
+journal/agent/cli; journal **11/0** (+1), agent **63/0** (+2), full
+workspace **400 passed, 0 failed** parallel —
+`docs/evidence/2026-10-27-rs026-round2/`. Not reviewed this round: the
+sibling session's in-flight job.rs compatibility surface (0.3.44 landed
+it; their round).
