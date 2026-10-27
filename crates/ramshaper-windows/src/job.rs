@@ -21,11 +21,15 @@
 //!   (`is_in_any_job`) is the preflight seam; nested-job behavior is a test,
 //!   not an assumption.
 //!
-//! Boundary: this is a spike module. Nothing in the agent, CLI or UI calls
-//! it yet; the managed launcher stays unavailable in the shipped surface
-//! (doc 07: keep the launcher unavailable if the safety gate fails). A real
-//! mid-`CreateProcessW` interruption trace (AT-15's lifecycle evidence) is
-//! G4 rig work; this spike pins the crash-window *shape* by construction.
+//! RS-021 adds the read-only observation half: membership observation of
+//! any process (`observe_membership`), the launcher compatibility report
+//! (detect preexisting jobs — never escape them), active-process
+//! accounting and child-inheritance evidence. Still no production
+//! caller; the managed launcher stays unavailable in the shipped surface
+//! (doc 07: keep the launcher unavailable if the safety gate fails). A
+//! real mid-`CreateProcessW` interruption trace (AT-15's lifecycle
+//! evidence) is G4 rig work; this module pins the crash-window *shape*
+//! by construction.
 
 use std::mem::size_of;
 use std::mem::size_of_val;
@@ -38,9 +42,11 @@ use windows::Win32::Foundation::WAIT_TIMEOUT;
 use windows::Win32::System::JobObjects::AssignProcessToJobObject;
 use windows::Win32::System::JobObjects::CreateJobObjectW;
 use windows::Win32::System::JobObjects::IsProcessInJob;
+use windows::Win32::System::JobObjects::JobObjectBasicAccountingInformation;
 use windows::Win32::System::JobObjects::JobObjectBasicProcessIdList;
 use windows::Win32::System::JobObjects::JobObjectExtendedLimitInformation;
 use windows::Win32::System::JobObjects::QueryInformationJobObject;
+use windows::Win32::System::JobObjects::JOBOBJECT_BASIC_ACCOUNTING_INFORMATION;
 use windows::Win32::System::JobObjects::JOBOBJECT_BASIC_PROCESS_ID_LIST;
 use windows::Win32::System::JobObjects::JOBOBJECT_EXTENDED_LIMIT_INFORMATION;
 use windows::Win32::System::Threading::CreateProcessW;
@@ -222,6 +228,129 @@ impl AdvisoryJob {
             }
         }
     }
+
+    /// Live member count (`JOBOBJECT_BASIC_ACCOUNTING_INFORMATION`
+    /// ActiveProcesses — the RS-022 group-accounting groundwork). Zero
+    /// after every member exits: this module has no other removal path —
+    /// no breakaway is ever requested, so a process leaves the job only
+    /// by terminating.
+    ///
+    /// # Errors
+    /// [`JobError::Os`] when the query fails.
+    pub fn active_processes(&self) -> Result<u32, JobError> {
+        let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+        // SAFETY: valid job handle; the out-parameter is the documented
+        // struct with its size.
+        unsafe {
+            QueryInformationJobObject(
+                Some(self.handle.raw()),
+                JobObjectBasicAccountingInformation,
+                &mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION as *mut core::ffi::c_void,
+                size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                None,
+            )
+        }
+        .map_err(|e| JobError::from("QueryInformationJobObject", &e))?;
+        Ok(info.ActiveProcesses)
+    }
+}
+
+/// Read-only membership observation of one process (RS-021). `in_any_job`
+/// is the environment fact (any job at all); `in_queried_job` answers
+/// membership in one specific advisory job when probed — `None` when no
+/// job was given.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MembershipObservation {
+    /// The process is inside at least one job (any job).
+    pub in_any_job: bool,
+    /// The process is inside the queried advisory job (`None` = not probed).
+    pub in_queried_job: Option<bool>,
+}
+
+/// Observe one process's job membership. Read-only: two `IsProcessInJob`
+/// queries through a query-limited handle; nothing is attached, detached
+/// or broken away.
+///
+/// # Errors
+/// [`JobError::Os`] when the process cannot be opened or a query fails.
+pub fn observe_membership(
+    pid: u32,
+    job: Option<&AdvisoryJob>,
+) -> Result<MembershipObservation, JobError> {
+    // SAFETY: numeric PID; query-only rights.
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
+        .map_err(|e| JobError::from("OpenProcess", &e))?;
+    // SAFETY: OpenProcess returned a valid owned handle.
+    let process = unsafe { OwnedHandle::adopt(process) };
+    let in_any_job = in_job_of(&process, None, "IsProcessInJob")?;
+    let in_queried_job = match job {
+        Some(job) => Some(in_job_of(
+            &process,
+            Some(job.handle.raw()),
+            "IsProcessInJob",
+        )?),
+        None => None,
+    };
+    Ok(MembershipObservation {
+        in_any_job,
+        in_queried_job,
+    })
+}
+
+/// The launcher-environment compatibility report (RS-021; doc 04 §D:
+/// "A job may inherit constraints from the launcher environment. Detect
+/// incompatible preexisting jobs; do not escape them."). A foreign job on
+/// the launcher means managed children would nest inside it — and its
+/// limits are **not queryable** without a handle the documented API does
+/// not provide, so the report carries that unknown honestly instead of
+/// guessing safety.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompatibilityReport {
+    /// The calling process is already inside a job (children would nest).
+    pub launcher_in_job: bool,
+    /// The target's membership, when a target was probed.
+    pub target: Option<MembershipObservation>,
+    /// Honest unknowns and compatibility notes (stable text, for the
+    /// future launcher's refusal/explain surface).
+    pub notes: Vec<String>,
+}
+
+/// Report the job compatibility of the launcher environment and one
+/// optional target. Read-only; never escapes or mutates any job.
+///
+/// # Errors
+/// [`JobError::Os`] when a query fails.
+pub fn compatibility_report(
+    target_pid: Option<u32>,
+    job: Option<&AdvisoryJob>,
+) -> Result<CompatibilityReport, JobError> {
+    let launcher_pid = unsafe { GetCurrentProcess() };
+    let _ = launcher_pid;
+    let launcher_in_job = is_in_any_job(std::process::id())?;
+    let mut notes = Vec::new();
+    if launcher_in_job {
+        notes.push(
+            "launcher is already inside a job; managed children would nest inside it              and the foreign job's limits are not queryable (treated as an              uncontrolled environment — the launcher must refuse or accept nesting              explicitly)"
+                .to_string(),
+        );
+    }
+    let target = match target_pid {
+        Some(pid) => {
+            let observation = observe_membership(pid, job)?;
+            if observation.in_any_job && observation.in_queried_job == Some(false) {
+                notes.push(format!(
+                    "target {pid} is in a foreign job (not this advisory job);                      managed creation would nest it — association cannot be undone"
+                ));
+            }
+            Some(observation)
+        }
+        None => None,
+    };
+    Ok(CompatibilityReport {
+        launcher_in_job,
+        target,
+        notes,
+    })
 }
 
 /// `IsProcessInJob` through a process handle: `job = None` asks whether the
@@ -451,6 +580,15 @@ mod tests {
     use std::time::Instant;
     use windows::Win32::System::Threading::PROCESS_SET_QUOTA;
 
+    /// Stop a probe process by explicit PID (the tests' own children; the
+    /// production module has no kill — a managed launcher removes
+    /// monitoring, never processes, per RS-023).
+    fn stop_pid(pid: u32) {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .status();
+    }
+
     /// A quiet, alive child: `ping -n <seconds> 127.0.0.1` (the RS-016
     /// actuator fixture pattern).
     fn spawn_quiet_child(seconds: u32) -> Child {
@@ -575,6 +713,187 @@ mod tests {
         );
 
         let _ = child.wait();
+    }
+
+    #[test]
+    fn observe_membership_reads_any_job_and_one_specific_job() {
+        let job = AdvisoryJob::create().expect("create advisory job");
+        let managed = ManagedChild::spawn(&job, "ping -n 5 127.0.0.1").expect("managed spawn");
+
+        // A job member: in any job AND in the queried advisory job.
+        let observed = observe_membership(managed.pid(), Some(&job)).expect("observe member");
+        assert!(observed.in_any_job);
+        assert_eq!(observed.in_queried_job, Some(true));
+
+        // The same advisory job observed from the outside: not probed.
+        let bare = observe_membership(managed.pid(), None).expect("observe without a job");
+        assert!(bare.in_any_job);
+        assert_eq!(bare.in_queried_job, None);
+
+        // A plain child: it may legitimately be inside SOME job (modern
+        // Windows hosts organize processes into jobs, and children inherit
+        // membership) — the meaningful fact is that it is NOT in this
+        // advisory job. (First observed live in the RS-021 review: the
+        // cargo-test process tree is itself jobbed on this machine.)
+        let mut plain = spawn_quiet_child(4);
+        let plain_pid = plain.id();
+        let observed_plain = observe_membership(plain_pid, Some(&job)).expect("observe plain");
+        assert_eq!(
+            observed_plain.in_queried_job,
+            Some(false),
+            "a plain child was never assigned to the advisory job"
+        );
+
+        stop_pid(managed.pid());
+        let _ = plain.kill();
+        let _ = plain.wait();
+    }
+
+    #[test]
+    fn compatibility_report_detects_foreign_job_membership_on_the_target() {
+        // The target lives in advisory job B; the report probing it against
+        // advisory job A must name the foreign-job fact as a note (detect,
+        // never escape — doc 04 section D).
+        let job_a = AdvisoryJob::create().expect("job A");
+        let job_b = AdvisoryJob::create().expect("job B");
+        let target = ManagedChild::spawn(&job_b, "ping -n 5 127.0.0.1").expect("managed spawn");
+
+        let report = compatibility_report(Some(target.pid()), Some(&job_a)).expect("report");
+        // The launcher fact must be self-consistent (the report's own
+        // probe vs a direct query). On this machine the test process tree
+        // IS inside a job (an ancestor host job — first observed in this
+        // review), so launcher_in_job can legitimately be true and the
+        // report then carries the nesting note.
+        assert_eq!(
+            report.launcher_in_job,
+            is_in_any_job(std::process::id()).expect("direct query"),
+            "the report's launcher fact matches a direct query"
+        );
+        if report.launcher_in_job {
+            assert!(
+                report
+                    .notes
+                    .iter()
+                    .any(|note| note.contains("launcher is already inside a job")),
+                "the nesting note must accompany a jobbed launcher: {report:?}"
+            );
+        }
+        let target_observation = report.target.clone().expect("target probed");
+        assert!(target_observation.in_any_job);
+        assert_eq!(
+            target_observation.in_queried_job,
+            Some(false),
+            "member of B, not A"
+        );
+        assert!(
+            report
+                .notes
+                .iter()
+                .any(|note| note.contains("foreign job") && note.contains("cannot be undone")),
+            "the foreign-job note must be present: {report:?}"
+        );
+
+        // Probing against the target's OWN job: no FOREIGN note. (The
+        // launcher nesting note may still be present — this environment's
+        // test process tree is itself jobbed; that note is about the
+        // launcher, not the target.)
+        let own_report = compatibility_report(Some(target.pid()), Some(&job_b)).expect("report");
+        assert!(
+            !own_report
+                .notes
+                .iter()
+                .any(|note| note.contains("is in a foreign job")),
+            "no target-foreign note when probing with the target's own job: {own_report:?}"
+        );
+
+        stop_pid(target.pid());
+    }
+
+    #[test]
+    fn active_processes_tracks_membership_and_only_exit_removes_it() {
+        // The no-breakaway proof by lifecycle: a member leaves the job
+        // ONLY by terminating. Nothing in this module ever detaches a
+        // live process (no SetInformationJobObject exists in the module),
+        // so the count drops exactly when the member dies — and the limit
+        // flags stay zero throughout (no breakaway was ever requested).
+        let job = AdvisoryJob::create().expect("create advisory job");
+        assert_eq!(job.active_processes().expect("count empty"), 0);
+        let managed = ManagedChild::spawn(&job, "ping -n 6 127.0.0.1").expect("managed spawn");
+        assert_eq!(job.active_processes().expect("count member"), 1);
+
+        // Still a member while alive (a breakaway would show as alive but
+        // absent from both the count and the id list).
+        let alive = managed.is_running().expect("alive check");
+        assert!(alive);
+        assert!(job.process_ids().expect("list").contains(&managed.pid()));
+        assert_eq!(job.limit_flags().expect("flags"), 0, "no breakaway flag");
+
+        stop_pid(managed.pid());
+        // Wait until the OS retires the member from the job (bounded).
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if job.active_processes().expect("count drained") == 0 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(job.active_processes().expect("count drained"), 0);
+        assert_eq!(job.limit_flags().expect("flags still zero"), 0);
+    }
+
+    #[test]
+    fn child_inheritance_is_reported_for_grandchildren() {
+        // RS-021's child-observation evidence: a grandchild (the managed
+        // child's own child) inherits the advisory job by membership —
+        // both generations appear in the id list and both observe as
+        // members. Compatibility data for the future launcher: managed
+        // creation applies to the whole subtree, not just the child.
+        let job = AdvisoryJob::create().expect("create advisory job");
+        let managed =
+            ManagedChild::spawn(&job, "powershell -NoProfile -Command \"Start-Process ping -ArgumentList '-n','6','127.0.0.1'; Start-Sleep -Seconds 4\"")
+                .expect("managed powershell");
+
+        // Wait for the next generation to appear in the job's id list.
+        // The count can exceed 2: a console powershell also drags in its
+        // conhost.exe, and EVERY descendant inherits the job — the whole
+        // subtree, including invisible hosts, is the compatibility fact
+        // the future launcher must accept.
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let ids = loop {
+            let ids = job.process_ids().expect("id list");
+            if ids.len() >= 2 {
+                break ids;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the next generation never appeared; ids: {ids:?}"
+            );
+            std::thread::sleep(Duration::from_millis(250));
+        };
+        assert!(
+            ids.contains(&managed.pid()),
+            "the managed child stays a member: {ids:?}"
+        );
+        assert!(
+            ids.len() >= 2,
+            "at least one descendant beyond the managed child: {ids:?}"
+        );
+        // Every member observes as a member — the inheritance statement.
+        for &pid in &ids {
+            let observed = observe_membership(pid, Some(&job)).expect("observe member");
+            assert_eq!(
+                observed.in_queried_job,
+                Some(true),
+                "pid {pid} must have inherited the advisory job"
+            );
+        }
+        assert_eq!(
+            job.active_processes().expect("count"),
+            ids.len() as u32,
+            "the accounting count matches the id list"
+        );
+
+        stop_pid(managed.pid());
     }
 
     #[test]

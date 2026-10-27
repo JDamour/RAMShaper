@@ -2369,3 +2369,65 @@ recorded, not touched); every other crate green.
 **Not in this slice:** user-supplied trace files (a `--trace <file>`
 schema over `TargetObservation` — a future extension); the managed-
 launch `restore` command family (G4).
+
+---
+
+# RS-021 — job membership/child observation + compatibility report, 2026-10-27
+
+**Scope implemented:** the read-only observation half of the managed-
+launch track (doc 07 RS-021; doc 04 §D's "detect incompatible preexisting
+jobs; do not escape them"), layered on the RS-020 spike's
+`ramshaper-windows::job`:
+
+- `observe_membership(pid, job?) -> MembershipObservation` — two
+  documented `IsProcessInJob` queries through a query-limited handle:
+  the environment fact (`in_any_job`) plus membership in one specific
+  advisory job (`in_queried_job`). Nothing is attached, detached or
+  broken away.
+- `CompatibilityReport` / `compatibility_report(target?, job?)` — the
+  launcher-environment preflight: `launcher_in_job` (managed children
+  would nest), the target's membership, and **honest notes** — a jobbed
+  launcher carries the nesting note ("the foreign job's limits are not
+  queryable... the launcher must refuse or accept nesting explicitly"),
+  a target in a *foreign* job carries the can't-undo note. The notes are
+  the data; the report never guesses safety.
+- `AdvisoryJob::active_processes()` — `JOBOBJECT_BASIC_ACCOUNTING_INFORMATION`
+  ActiveProcesses, the RS-022 group-accounting groundwork.
+
+**No-breakaway proof by lifecycle** (live test): a member is in the id
+list and the count while alive; after it is terminated the count drains
+to 0; the queried limit flags stay **0 through the whole lifecycle** —
+this module has no removal path other than process exit (no
+`SetInformationJobObject` call exists in it).
+
+**Environmental finding, pinned by the tests (first observed here):**
+the cargo-test process tree **is itself inside a job** on this machine
+(an ancestor host job — modern Windows hosts organize processes into
+jobs), and children inherit membership. Two consequences pinned:
+"not in any job" must never be asserted absolutely (tests use relative
+facts), and the compatibility report *correctly fires its nesting note
+in ordinary development environments* — which is exactly the decision
+input the future launcher's accept/refuse needs. Second pinned fact: a
+console `powershell` child drags its `conhost.exe` into the job too —
+**the whole subtree inherits, including invisible hosts** (3 members,
+not 2), which is the compatibility risk the Stage B allowlist exists to
+test.
+
+**Live results** (10 job tests, all green; evidence
+`docs/evidence/2026-10-27-rs021-job-observation/live-tests.txt`):
+membership observation distinguishes any-job/advisory-job/no-job;
+the compatibility report is self-consistent against a direct query and
+scopes its notes correctly (foreign note only for a genuinely foreign
+target job); grandchild inheritance shows every subtree member observing
+as a member with the accounting count matching the id list.
+
+**Boundary:** still no production caller — RS-022 (group accounting/
+advisory thresholds) and RS-023 (launch consent, non-detachable
+semantics) build on this; the launcher itself stays unavailable until
+the G4 safety gate passes. No forced breakaway exists anywhere in the
+module; "unmanaged retry" is absent by construction (creation-time
+assignment has no retry window — RS-020's finding, unchanged).
+
+**Workspace gates (2026-10-27):** windows crate fmt/clippy (`-D
+warnings`) clean, **50 passed / 0 failed** (28→34 lib incl. the new
+tests + integration + pipe probe).

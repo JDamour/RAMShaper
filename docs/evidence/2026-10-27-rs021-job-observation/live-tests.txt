@@ -1,0 +1,55 @@
+# RS-021 — job membership/child observation: live test run (2026-10-27)
+
+Host: Windows 11 26200.9711, standard user
+Command: cargo test -p ramshaper-windows job::tests -- --test-threads=1 --nocapture
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.66s
+     Running unittests src\lib.rs (target\debug\deps\ramshaper_windows-6223dd43a4ffdee3.exe)
+
+running 10 tests
+test job::tests::active_processes_tracks_membership_and_only_exit_removes_it ... 
+ok
+test job::tests::advisory_job_defaults_have_zero_limits ... ok
+test job::tests::child_inheritance_is_reported_for_grandchildren ... SUCCESS: The process with PID 49568 has been terminated.
+ok
+test job::tests::compatibility_report_detects_foreign_job_membership_on_the_target ... 
+ok
+test job::tests::failed_launch_reports_error_and_leaves_the_job_empty ... ok
+test job::tests::job_close_is_survivable_even_without_an_explicit_child_reference ... 
+
+    Packets: Sent = 3, Received = 3, Lost = 0 (0% loss),
+Approximate round trip times in milli-seconds:
+ok
+test job::tests::managed_child_is_assigned_at_creation_survives_job_close_and_completes_unaided ... 
+
+    Packets: Sent = 4, Received = 4, Lost = 0 (0% loss),
+Approximate round trip times in milli-seconds:
+ok
+test job::tests::membership_probes_detect_a_job_member ... 
+
+    Packets: Sent = 3, Received = 3, Lost = 0 (0% loss),
+Approximate round trip times in milli-seconds:
+ok
+test job::tests::nested_environment_child_lands_in_both_jobs ... 
+
+    Packets: Sent = 3, Received = 3, Lost = 0 (0% loss),
+Approximate round trip times in milli-seconds:
+ok
+test job::tests::observe_membership_reads_any_job_and_one_specific_job ... 
+
+ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 24 filtered out; finished in 14.21s
+
+     Running tests\integration.rs (target\debug\deps\integration-1b12fd497e9d365a.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+     Running tests\pipe_probe.rs (target\debug\deps\pipe_probe-751c2c846dbda682.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
