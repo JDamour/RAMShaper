@@ -1,0 +1,151 @@
+{
+  "schema": "ramshaper.ab_analysis.v1",
+  "runs": [
+    {
+      "run_id": "a-1",
+      "n_valid": 19,
+      "n_missing": 1,
+      "missing": [
+        "event timeout"
+      ],
+      "p50_ms": 100.0,
+      "p95_ms": 100.0
+    },
+    {
+      "run_id": "b-1",
+      "n_valid": 20,
+      "n_missing": 0,
+      "missing": [],
+      "p50_ms": 90.0,
+      "p95_ms": 90.0
+    },
+    {
+      "run_id": "a-2",
+      "n_valid": 19,
+      "n_missing": 1,
+      "missing": [
+        "event timeout"
+      ],
+      "p50_ms": 100.0,
+      "p95_ms": 100.0
+    },
+    {
+      "run_id": "b-2",
+      "n_valid": 20,
+      "n_missing": 0,
+      "missing": [],
+      "p50_ms": 90.0,
+      "p95_ms": 90.0
+    },
+    {
+      "run_id": "a-3",
+      "n_valid": 19,
+      "n_missing": 1,
+      "missing": [
+        "event timeout"
+      ],
+      "p50_ms": 100.0,
+      "p95_ms": 100.0
+    },
+    {
+      "run_id": "b-3",
+      "n_valid": 20,
+      "n_missing": 0,
+      "missing": [],
+      "p50_ms": 90.0,
+      "p95_ms": 90.0
+    },
+    {
+      "run_id": "a-4",
+      "n_valid": 19,
+      "n_missing": 1,
+      "missing": [
+        "event timeout"
+      ],
+      "p50_ms": 100.0,
+      "p95_ms": 100.0
+    },
+    {
+      "run_id": "b-4",
+      "n_valid": 20,
+      "n_missing": 0,
+      "missing": [],
+      "p50_ms": 90.0,
+      "p95_ms": 90.0
+    },
+    {
+      "run_id": "a-5",
+      "n_valid": 19,
+      "n_missing": 1,
+      "missing": [
+        "event timeout"
+      ],
+      "p50_ms": 100.0,
+      "p95_ms": 100.0
+    },
+    {
+      "run_id": "b-5",
+      "n_valid": 20,
+      "n_missing": 0,
+      "missing": [],
+      "p50_ms": 90.0,
+      "p95_ms": 90.0
+    }
+  ],
+  "pairs": [
+    {
+      "block_id": 1,
+      "baseline_p95_ms": 100.0,
+      "treatment_p95_ms": 90.0,
+      "improvement_pct": 10.0
+    },
+    {
+      "block_id": 2,
+      "baseline_p95_ms": 100.0,
+      "treatment_p95_ms": 90.0,
+      "improvement_pct": 10.0
+    },
+    {
+      "block_id": 3,
+      "baseline_p95_ms": 100.0,
+      "treatment_p95_ms": 90.0,
+      "improvement_pct": 10.0
+    },
+    {
+      "block_id": 4,
+      "baseline_p95_ms": 100.0,
+      "treatment_p95_ms": 90.0,
+      "improvement_pct": 10.0
+    },
+    {
+      "block_id": 5,
+      "baseline_p95_ms": 100.0,
+      "treatment_p95_ms": 90.0,
+      "improvement_pct": 10.0
+    }
+  ],
+  "summary": {
+    "pairs_used": 5,
+    "pairs_excluded": [],
+    "median_improvement_pct": 10.0,
+    "ci95_improvement_pct": [
+      10.0,
+      10.0
+    ],
+    "resamples": 10000,
+    "seed": 42,
+    "exploratory": false
+  },
+  "label": "ValidatedImprovement",
+  "reasons": [
+    "median improvement 10.00% >= 5% and interval [10.00, 10.00] excludes zero"
+  ],
+  "guardrails": {
+    "foreground_max_slowdown_pct": 2.0,
+    "background_max_slowdown_pct": 10.0
+  },
+  "safety": {
+    "safety_failure": false,
+    "reasons": []
+  }
+}

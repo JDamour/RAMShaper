@@ -1,0 +1,22 @@
+{
+  "schema": "ramshaper.preregistration.v1",
+  "declared_at_utc": "2026-10-26T18:20:00Z",
+  "workload_declaration": "Background file-indexer simulation; 100 x ~1ms tasks per run; primary endpoint p95 task latency",
+  "workload": {
+    "events_per_run": 100,
+    "warmup_events": 10,
+    "task_iters": 200000,
+    "pilot_blocks": 10,
+    "order_seed": 4242
+  },
+  "bootstrap": {
+    "resamples": 10000,
+    "seed": 4242
+  },
+  "thresholds": {
+    "primary_benefit_pct": 5.0,
+    "foreground_max_slowdown_pct": 2.0,
+    "background_max_slowdown_pct": 10.0,
+    "min_blocks_confirmatory": 5
+  }
+}

@@ -2493,3 +2493,36 @@ were in progress during this slice and were not touched; the RS-021-era
 flake fix on this module's compatibility test (`ping -n 5` → `-n 30`
 under parallel suite load, attributed to the parallel session) folds
 into this slice's commit.
+
+---
+
+# AT-22 rerun-bundle assembler — protocol tooling, 2026-10-27
+
+**Scope implemented:** `scripts/rerun-bundle.ps1` — assembles a rerun
+bundle (AT-22's evidence class: "Scripts, checksums, raw data and
+reports") from a preregistration + analysis report (+ optional raw data):
+inputs copied verbatim into `raw/`, build provenance regenerated into the
+bundle, `SHA256SUMS.txt` covering every bundled file, and `RERUN.md` with
+the exact second-operator procedure (rebuild at the recorded HEAD, verify
+binary hashes, re-run per the frozen plan, re-analyze with the frozen
+bootstrap parameters, compare decision structure rather than
+machine-dependent latency values). **The bundle directory is immutable
+once assembled** — re-assembly is refused with the reason. The real AT-22
+rerun (second operator, three workload classes) remains G5/owner after
+real trials; this is the protocol tooling.
+
+**PS 5.1 quirks fixed during validation (recorded for future scripts):**
+`$input` is a reserved automatic variable (clobbering it breaks later
+pipelines); `ForEach-Object` threw `MethodNotFound` where a statement
+loop works; `[IO.Path]::GetRelativePath` does not exist on .NET Framework
+(use `Substring` from a resolved root); `Set-Content -Encoding UTF8`
+writes a BOM (use `[IO.File]::WriteAllText` with
+`UTF8Encoding($false)`); `$(Get-Date).ToUniversalTime()` stops at the
+cmdlet boundary (assign the formatted string first); `Join-Path` with an
+absolute child produces an unsupported path (root-check before joining).
+The immutability guard was itself exercised: partial assemblies from
+failed runs are refused on re-run until cleaned.
+
+**Live evidence** (`docs/evidence/2026-10-27-at22-rerun-bundle/`): the
+demo bundle (fixture + regenerated report + preregistration demo plan)
+with working checksums and instructions, plus the guard's refusal.

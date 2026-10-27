@@ -65,6 +65,9 @@ $manifest.git.working_tree = if ($null -ne $dirty -and $dirty.Count -gt 0) { 'di
 $json = $manifest | ConvertTo-Json -Depth 5
 # BOM-less UTF-8: Set-Content's -Encoding UTF8 writes a BOM in PS 5.1,
 # which breaks JSON consumers.
-[System.IO.File]::WriteAllText((Join-Path (Get-Location) $Out), $json + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
+# An absolute -Out (e.g. passed by rerun-bundle.ps1) must not be joined
+# onto the current directory.
+$OutPath = if ([System.IO.Path]::IsPathRooted($Out)) { $Out } else { Join-Path (Get-Location) $Out }
+[System.IO.File]::WriteAllText($OutPath, $json + [Environment]::NewLine, [System.Text.UTF8Encoding]::new($false))
 Write-Output "provenance manifest written: $Out"
 Write-Output $json
