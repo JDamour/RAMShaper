@@ -238,6 +238,18 @@ impl AdvisoryJob {
     /// # Errors
     /// [`JobError::Os`] when the query fails.
     pub fn active_processes(&self) -> Result<u32, JobError> {
+        Ok(self.accounting()?.active_processes)
+    }
+
+    /// Full group accounting for the advisory job (RS-022): process counts
+    /// (total/active/terminated) and accumulated CPU time (user + kernel,
+    /// 100-ns units). Read-only `QueryInformationJobObject`; nothing is
+    /// ever set — thresholds are evaluated in software by
+    /// [`evaluate_advisory`], never enforced by the OS.
+    ///
+    /// # Errors
+    /// [`JobError::Os`] when the query fails.
+    pub fn accounting(&self) -> Result<GroupAccounting, JobError> {
         let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
         // SAFETY: valid job handle; the out-parameter is the documented
         // struct with its size.
@@ -251,8 +263,121 @@ impl AdvisoryJob {
             )
         }
         .map_err(|e| JobError::from("QueryInformationJobObject", &e))?;
-        Ok(info.ActiveProcesses)
+        Ok(GroupAccounting {
+            total_processes: info.TotalProcesses,
+            active_processes: info.ActiveProcesses,
+            terminated_processes: info.TotalTerminatedProcesses,
+            total_user_time_100ns: info.TotalUserTime,
+            total_kernel_time_100ns: info.TotalKernelTime,
+            total_page_faults: info.TotalPageFaultCount,
+        })
     }
+}
+
+/// Group accounting read from the advisory job (RS-022). Mirrors
+/// `JOBOBJECT_BASIC_ACCOUNTING_INFORMATION` with owned, typed fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GroupAccounting {
+    /// Every process ever assigned (including exited ones).
+    pub total_processes: u32,
+    /// Live members right now.
+    pub active_processes: u32,
+    /// Members that terminated (normally or killed).
+    pub terminated_processes: u32,
+    /// Accumulated user-mode CPU time of all members, 100-ns units.
+    pub total_user_time_100ns: i64,
+    /// Accumulated kernel-mode CPU time of all members, 100-ns units.
+    pub total_kernel_time_100ns: i64,
+    /// Total page faults of all members.
+    pub total_page_faults: u32,
+}
+
+impl GroupAccounting {
+    /// Accumulated CPU time (user + kernel), 100-ns units.
+    #[must_use]
+    pub fn total_cpu_time_100ns(&self) -> i64 {
+        self.total_user_time_100ns
+            .saturating_add(self.total_kernel_time_100ns)
+    }
+}
+
+/// Software-side advisory thresholds (RS-022). **Advisory means advisory**:
+/// these are evaluated by [`evaluate_advisory`] against observed accounting
+/// and produce a *report*; nothing is ever handed to
+/// `SetInformationJobObject`, so the OS enforces nothing — no hard limits,
+/// no time limits, no process-count limits, no kill-on-close (doc 04 §D;
+/// RS-022's "no hard/time/process-count/kill limits").
+// Zero everywhere: a default-constructed evaluator reports "within" —
+// advisory thresholds are opt-in observations.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AdvisoryThresholds {
+    /// Advisory maximum for live members (0 = not evaluated).
+    pub max_active_processes: u32,
+    /// Advisory maximum for accumulated member CPU time, 100-ns units
+    /// (0 = not evaluated).
+    pub max_total_cpu_time_100ns: i64,
+}
+
+/// One exceeded advisory threshold. **Report-only**: no OS enforcement
+/// exists behind this — the observer surfaces it, the operator decides.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdvisoryExceeded {
+    /// Live members above the advisory maximum.
+    pub active_processes: u32,
+    /// The advisory maximum that was exceeded.
+    pub max_active_processes: u32,
+    /// Accumulated CPU time above the advisory maximum, 100-ns units.
+    pub total_cpu_time_100ns: i64,
+    /// The advisory maximum that was exceeded.
+    pub max_total_cpu_time_100ns: i64,
+}
+
+impl AdvisoryExceeded {
+    /// Stable machine codes of everything exceeded (audit/IPC).
+    #[must_use]
+    pub fn codes(&self) -> Vec<&'static str> {
+        let mut codes = Vec::new();
+        if self.active_processes > self.max_active_processes {
+            codes.push("advisory_active_processes");
+        }
+        if self.total_cpu_time_100ns > self.max_total_cpu_time_100ns {
+            codes.push("advisory_total_cpu_time");
+        }
+        codes
+    }
+}
+
+/// The advisory evaluation outcome (pure; testable without a job).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdvisoryStatus {
+    /// Every configured threshold holds.
+    Within,
+    /// One or more advisory thresholds are exceeded (report-only).
+    Exceeded(AdvisoryExceeded),
+}
+
+/// Evaluate observed group accounting against advisory thresholds. Pure:
+/// no OS call, no mutation, no enforcement — exceeding a threshold is a
+/// *reported fact*, and what (if anything) happens next belongs to the
+/// consent-gated layers above.
+#[must_use]
+pub fn evaluate_advisory(
+    accounting: &GroupAccounting,
+    thresholds: &AdvisoryThresholds,
+) -> AdvisoryStatus {
+    let processes_exceeded = thresholds.max_active_processes > 0
+        && accounting.active_processes > thresholds.max_active_processes;
+    let cpu_exceeded = thresholds.max_total_cpu_time_100ns > 0
+        && accounting.total_cpu_time_100ns() > thresholds.max_total_cpu_time_100ns;
+    if !processes_exceeded && !cpu_exceeded {
+        return AdvisoryStatus::Within;
+    }
+    AdvisoryStatus::Exceeded(AdvisoryExceeded {
+        active_processes: accounting.active_processes,
+        max_active_processes: thresholds.max_active_processes,
+        total_cpu_time_100ns: accounting.total_cpu_time_100ns(),
+        max_total_cpu_time_100ns: thresholds.max_total_cpu_time_100ns,
+    })
 }
 
 /// Read-only membership observation of one process (RS-021). `in_any_job`
@@ -756,7 +881,11 @@ mod tests {
         // never escape — doc 04 section D).
         let job_a = AdvisoryJob::create().expect("job A");
         let job_b = AdvisoryJob::create().expect("job B");
-        let target = ManagedChild::spawn(&job_b, "ping -n 5 127.0.0.1").expect("managed spawn");
+        // A long-lived child: this test makes two report probes, and under
+        // parallel suite load scheduling delays have pushed a `-n 5` child
+        // past its exit mid-test (the one observed flake). The child is
+        // killed explicitly at the test's end.
+        let target = ManagedChild::spawn(&job_b, "ping -n 30 127.0.0.1").expect("managed spawn");
 
         let report = compatibility_report(Some(target.pid()), Some(&job_a)).expect("report");
         // The launcher fact must be self-consistent (the report's own
@@ -894,6 +1023,174 @@ mod tests {
         );
 
         stop_pid(managed.pid());
+    }
+
+    #[test]
+    fn advisory_evaluator_pure_paths() {
+        let accounting = GroupAccounting {
+            total_processes: 3,
+            active_processes: 2,
+            terminated_processes: 1,
+            total_user_time_100ns: 1_000,
+            total_kernel_time_100ns: 500,
+            total_page_faults: 10,
+        };
+        assert_eq!(accounting.total_cpu_time_100ns(), 1_500);
+
+        // Everything within.
+        let relaxed = AdvisoryThresholds {
+            max_active_processes: 2,
+            max_total_cpu_time_100ns: 1_500,
+        };
+        assert_eq!(
+            evaluate_advisory(&accounting, &relaxed),
+            AdvisoryStatus::Within,
+            "equality is within: thresholds are inclusive bounds"
+        );
+
+        // Both exceeded, both named.
+        let strict = AdvisoryThresholds {
+            max_active_processes: 1,
+            max_total_cpu_time_100ns: 1_499,
+        };
+        match evaluate_advisory(&accounting, &strict) {
+            AdvisoryStatus::Exceeded(exceeded) => {
+                assert_eq!(
+                    exceeded.codes(),
+                    vec!["advisory_active_processes", "advisory_total_cpu_time"]
+                );
+                assert_eq!(exceeded.active_processes, 2);
+                assert_eq!(exceeded.total_cpu_time_100ns, 1_500);
+            }
+            other => panic!("expected Exceeded, got {other:?}"),
+        }
+
+        // Zero = not evaluated (the opt-out default).
+        assert_eq!(
+            evaluate_advisory(&accounting, &AdvisoryThresholds::default()),
+            AdvisoryStatus::Within
+        );
+    }
+
+    #[test]
+    fn accounting_reports_process_counts_and_cpu_time() {
+        let job = AdvisoryJob::create().expect("create advisory job");
+        let managed = ManagedChild::spawn(&job, "ping -n 8 127.0.0.1").expect("managed spawn");
+        let accounting = job.accounting().expect("accounting");
+        assert!(accounting.active_processes >= 1, "{accounting:?}");
+        assert!(accounting.total_processes >= 1);
+        // A child accumulates CPU time when it wakes (ping sleeps between
+        // ICMP sends), so poll bounded until the first charged tick. The
+        // child must outlive the poll window (ping -n 8 ≈ 7 s alive).
+        let deadline = Instant::now() + Duration::from_secs(6);
+        let accounting = loop {
+            let current = job.accounting().expect("accounting");
+            if current.total_cpu_time_100ns() > 0 {
+                break current;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "no CPU time accumulated in 10 s: {current:?}"
+            );
+            std::thread::sleep(Duration::from_millis(250));
+        };
+        assert!(
+            accounting.total_user_time_100ns > 0 || accounting.total_kernel_time_100ns > 0,
+            "{accounting:?}"
+        );
+        stop_pid(managed.pid());
+        // Terminated processes lag the OS retirement; wait bounded.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline && job.active_processes().expect("count") > 0 {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let after = job.accounting().expect("accounting after exit");
+        assert_eq!(after.active_processes, 0, "{after:?}");
+        assert!(after.total_processes >= 1, "{after:?}");
+        // NOTE (recorded, not hidden): TotalTerminatedProcesses stayed 0
+        // here even though the member was force-terminated (taskkill /F)
+        // and ActiveProcesses drained to 0 — on this build the counter is
+        // only trustworthy for naturally exiting members. An advisory
+        // report must not treat it as a complete kill count.
+        // (First observed in the RS-022 review probes.)
+    }
+
+    #[test]
+    fn advisory_evaluation_reports_exceeded_thresholds_without_touching_the_job() {
+        let job = AdvisoryJob::create().expect("create advisory job");
+        let managed = ManagedChild::spawn(&job, "ping -n 3 127.0.0.1").expect("managed spawn");
+        let accounting = job.accounting().expect("accounting");
+
+        // Zero thresholds are opt-out: the default reports Within.
+        assert_eq!(
+            evaluate_advisory(&accounting, &AdvisoryThresholds::default()),
+            AdvisoryStatus::Within
+        );
+
+        // A threshold the observed facts exceed: reported, and the job is
+        // untouched (flags stay zero — the OS enforces nothing). Two
+        // members so the process threshold is nonzero (zero = not
+        // evaluated), and a CPU threshold below the observed accumulation
+        // (polled first so the observed time is nonzero).
+        let mut managed2 = ManagedChild::spawn(&job, "ping -n 3 127.0.0.1").expect("second member");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let accounting = loop {
+            let current = job.accounting().expect("accounting");
+            if current.total_cpu_time_100ns() > 0 {
+                break current;
+            }
+            assert!(Instant::now() < deadline, "no CPU time accumulated");
+            std::thread::sleep(Duration::from_millis(250));
+        };
+        let thresholds = AdvisoryThresholds {
+            max_active_processes: accounting.active_processes - 1,
+            max_total_cpu_time_100ns: accounting.total_cpu_time_100ns() - 1,
+        };
+        match evaluate_advisory(&accounting, &thresholds) {
+            AdvisoryStatus::Exceeded(exceeded) => {
+                assert_eq!(
+                    exceeded.codes(),
+                    vec!["advisory_active_processes", "advisory_total_cpu_time"]
+                );
+            }
+            other => panic!("expected Exceeded, got {other:?}"),
+        }
+        assert_eq!(
+            job.limit_flags().expect("flags"),
+            0,
+            "an advisory evaluation must never mutate the job"
+        );
+        stop_pid(managed2.pid());
+        stop_pid(managed.pid());
+        assert_eq!(
+            job.limit_flags().expect("flags"),
+            0,
+            "an advisory evaluation must never mutate the job"
+        );
+        stop_pid(managed.pid());
+    }
+
+    #[test]
+    fn survive_agent_exit_with_the_accounting_view() {
+        // RS-022's survive test: EVERY handle (job + child) is dropped
+        // while the child runs — the app must complete unaided (no
+        // kill-on-close exists to stop it). The accounting view is lost
+        // with the handle (honest limitation: a crashed agent cannot read
+        // the job it no longer holds), so survival is asserted the same
+        // way the RS-020 spike did — by the child's own completion.
+        let child = {
+            let job = AdvisoryJob::create().expect("create advisory job");
+            let managed = ManagedChild::spawn(&job, "ping -n 3 127.0.0.1").expect("managed spawn");
+            assert_eq!(job.active_processes().expect("count before drop"), 1);
+            managed
+        };
+        let started = Instant::now();
+        let exit = child.wait().expect("completes with every handle dropped");
+        assert_eq!(exit, 0);
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the child completed on its own schedule"
+        );
     }
 
     #[test]

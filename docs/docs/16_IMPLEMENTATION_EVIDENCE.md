@@ -2431,3 +2431,64 @@ assignment has no retry window — RS-020's finding, unchanged).
 **Workspace gates (2026-10-27):** windows crate fmt/clippy (`-D
 warnings`) clean, **50 passed / 0 failed** (28→34 lib incl. the new
 tests + integration + pipe probe).
+
+---
+
+# RS-022 — group accounting + advisory thresholds, 2026-10-27
+
+**Scope implemented:** the accounting half of the managed-launch track
+(doc 07 RS-022), layered on RS-021's observation surface in
+`ramshaper-windows::job`:
+
+- `AdvisoryJob::accounting() -> GroupAccounting` — the full
+  `JOBOBJECT_BASIC_ACCOUNTING_INFORMATION` query with owned typed fields
+  (total/active/terminated process counts, user/kernel CPU time in
+  100-ns units, page faults) plus a `total_cpu_time_100ns()` helper.
+- `AdvisoryThresholds` + `evaluate_advisory(accounting, thresholds) ->
+  AdvisoryStatus` — **pure, software-side** threshold evaluation
+  (equality is within: thresholds are inclusive bounds; zero = not
+  evaluated; exceeded thresholds carry stable machine codes
+  `advisory_active_processes` / `advisory_total_cpu_time`).
+- **Advisory means advisory**: nothing is ever handed to
+  `SetInformationJobObject` — no hard limits, no time limits, no
+  process-count limits, no kill-on-close, no breakaway. Exceeding a
+  threshold is a *reported fact*; what happens next belongs to the
+  consent-gated layers above. A test pins that an evaluation never
+  mutates the job (limit flags stay 0).
+- **Survive-agent-exit evidence** (RS-022's own clause): every handle
+  (job + child) dropped while the child runs → the child completes
+  unaided. Honest limitation recorded: a crashed agent also loses the
+  accounting *view* — it cannot read a job it no longer holds; survival
+  is asserted by the child's own completion (the OS-level kill-everything
+  crash test remains AT-15 rig work).
+
+**Live findings (pinned by tests, not hidden):**
+1. A freshly spawned child charges **zero CPU time** at the first query —
+   time accumulates when the child wakes, so observations poll bounded
+   and the child must outlive the poll window.
+2. `TotalTerminatedProcesses` stayed 0 after a member was **force-terminated**
+   (taskkill /F) while ActiveProcesses drained to 0 — the counter is only
+   trustworthy for natural exits; an advisory report must not present it
+   as a complete kill count.
+3. A transient `CreateProcessW` **code 5** under parallel test spawn load
+   (serial rerun green; suspected Defender first-launch scan) — recorded
+   as the reason the suite runs serially.
+
+**Live results** (54 passed / 0 failed serially, incl. 5 new tests:
+accounting counts + CPU accumulation, the pure evaluator paths [within/
+both-exceeded/zero-opt-out], advisory exceed without job mutation,
+survive-agent-exit with the accounting view; evidence
+`docs/evidence/2026-10-27-rs022-group-accounting/live-tests.txt`).
+
+**Boundary:** still no production caller (RS-023 launch consent and the
+G4 launcher come later; the launcher stays unavailable until its safety
+gate passes). The pure evaluator is deliberately in the windows crate —
+promoting it to core happens when a consumer (RS-023) needs it there.
+
+**Workspace gates (2026-10-27):** windows crate fmt/clippy (`-D
+warnings`) clean, **54 passed / 0 failed** serially (38 lib + 15
+integration + 1 pipe probe). The sibling session's policy_ipc in-flight
+edits (guardrails Stage-B wiring) were in progress during this slice and
+were not touched; the RS-021-era flake fix in `policy_ipc.rs` (ping -n 5
+→ -n 30 under parallel load, attributed to the parallel session) folds
+into this slice's commit.
