@@ -80,3 +80,4 @@ amshaper-cli.exe and
   will fail with os error 5 until the attempt ends (the recorded gotcha;
   do NOT kill the rig to unblock a build).
 - attempt3-shutdown/watch.jsonl (60 MB, 6 minutes of the dead attempt) is preserved on disk but excluded from git per the recorded LFS-size guidance; the archive's small files (soak.jsonl, logs) are committed.
+- attempt-4 live `watch.jsonl` is likewise excluded from git (2026-10-28): at ~0.14 MB/min it would reach ~150-200 MB by the planned end — far over GitHub's 100 MB per-file reject limit — so the verdict commit carries soak.jsonl + driver.log only, and the full watch stream stays on disk beside them (path recorded here; preserved verbatim for the analyzer).
