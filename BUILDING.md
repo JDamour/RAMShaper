@@ -52,6 +52,9 @@ ramshaper-cli info
 ramshaper-cli info --json
 ramshaper-cli low-memory-watch [--json] [--interval-ms <ms>]
 ramshaper-cli processes [--json] [--interval-ms <ms>]
+ramshaper-cli policies --dry-run [--json] [--trace <FILE>]
+ramshaper-cli launch [options] -- <EXE> [ARGS...]
+ramshaper-cli config export|import ...
 ramshaper-cli --version
 ramshaper-cli --help
 ```
