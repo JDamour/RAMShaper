@@ -2309,8 +2309,16 @@ disable controls that answer explained refusals on gateless agents).
 3. Enable the consent flow for a declared synthetic workload and run the
    preregistered Stage B trial → the A/B report and the first allowlist
    entries (owner; the machinery — consent, gate, workload, prereg,
-   analysis — is complete and tested; the treatment injection point is
-   `run_workload`'s closure).
+   analysis — is complete and tested). **Correction 2026-10-28:** the
+   original text called the trial machinery "complete" — overstated; an
+   actually runnable consented trial is blocked by four concrete gaps
+   (no operator-facing allowlist path — the gate hardcodes an empty
+   allowlist; classification Unknown-denies every non-self target and the
+   override is constructor-only; no subject-process isolation — the
+   workload runs in the bench process, which self-identifies as
+   protected; no bench→gate treatment path). Design memo with options,
+   recommendations and the follow-up ticket list:
+   [design/2026-10-28-stage-b-trial-design.md](../design/2026-10-28-stage-b-trial-design.md).
 4. AT-21 cohort hardware (owner; no substitute is possible by design).
 
 **Not blocking, recorded:** the policy-loop ticker runs on a live 1 s
