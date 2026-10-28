@@ -3516,6 +3516,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ramshaper-subject"
+version = "0.1.0"
+dependencies = [
+ "ramshaper-bench",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ramshaper-ui"
 version = "0.1.0"
 dependencies = [

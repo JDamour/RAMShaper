@@ -1,0 +1,15 @@
+[package]
+name = "ramshaper-subject"
+description = "RAMShaper Stage B trial subject: runs the declared workload and emits its own task-latency series"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+ramshaper-bench = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

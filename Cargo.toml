@@ -7,6 +7,7 @@ members = [
     "crates/ramshaper-windows",
     "crates/ramshaper-cli",
     "crates/ramshaper-bench",
+    "crates/ramshaper-subject",
     "crates/ramshaper-agent",
     "crates/ramshaper-ui",
 ]
@@ -20,6 +21,7 @@ publish = false
 [workspace.dependencies]
 ramshaper-core = { path = "crates/ramshaper-core" }
 ramshaper-journal = { path = "crates/ramshaper-journal" }
+ramshaper-bench = { path = "crates/ramshaper-bench" }
 ramshaper-platform = { path = "crates/ramshaper-platform" }
 ramshaper-windows = { path = "crates/ramshaper-windows" }
 ramshaper-agent = { path = "crates/ramshaper-agent" }

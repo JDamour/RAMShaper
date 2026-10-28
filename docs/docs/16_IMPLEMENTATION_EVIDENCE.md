@@ -2800,3 +2800,36 @@ The AT-08 UI-side clause completed (core/config portion Passed
 - **Verdict:** AT-08 UI portion **Passed**. The G2 gate row's remaining
   blockers are unchanged (Slint license = owner; AT-19 interactive =
   human).
+
+---
+
+# ramshaper-subject — Stage B trial subject binary, 2026-10-28
+
+Follow-up ticket 2 of the Stage B design memo, built ahead of ADR-045 as
+**inert capability** (a workload-runner binary; the ADR gates whether the
+agent may act on it, not whether it exists — nothing in the shipped
+surface references it yet):
+
+- New crate `ramshaper-subject`: runs the same bounded-CPU workload as
+  `ramshaper-bench::workload` by CALLING `run_workload` (spec fidelity by
+  construction; the doc-08 >= 100-events minimum is enforced by the bench
+  validator, never re-implemented); takes a closed-schema JSON spec
+  (field names identical to `WorkloadSpec`); is always observe-only by
+  itself (the agent applies any treatment externally through its consent
+  gate); emits one `ramshaper.subject-run.v1` JSON record (latencies in
+  ms, completion status) and exits 0/1/2 for complete/stopped-early/
+  usage.
+- **Soak-constraint decisions (recorded in source):** the crate depends
+  on the bench lib rather than adding a bin to the bench crate — the
+  AT-06 soak holds `ramshaper-bench.exe`, and the release build compiled
+  only the new binary (verified live; bench/cli untouched). The spec is
+  mirrored because the bench types carry no serde derives and the bench
+  crate is frozen during the soak.
+- Image name NOT in the agent's self-identification list — it is the
+  experiment's subject, not RAMShaper machinery; that decision is
+  ADR-045's to ratify.
+- **Live evidence** (`docs/evidence/2026-10-28-ramshaper-subject/`):
+  release binary, 250-event demo spec, completion complete, p50 0.84 ms
+  / p95 1.11 ms. Gates: fmt/clippy clean; workspace **436/0** serially
+  (+9 tests, incl. 5 over the real binary and the closed-schema
+  refusal).

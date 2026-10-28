@@ -129,7 +129,7 @@ is not consent; nothing is grantable over IPC). Machine-doable follow-up.
 1. **ADR-045** (owner decision): operator-declared trial subjects — the
    `--allowlist-image` serve flag + the `OperatorDeclaredTrial` classification
    semantics + the subject image's placement outside self-identification.
-2. Subject binary (machine-doable after 1; reuses `ramshaper-bench::workload`).
+2. Subject binary — **DONE 2026-10-28** (`crates/ramshaper-subject`, built ahead of this ADR as inert capability; evidence `docs/evidence/2026-10-28-ramshaper-subject/`).
 3. Bench trial-orchestrator mode driving the policy IPC (machine-doable after
    2).
 4. Agent serve flags (machine-doable after 1).
