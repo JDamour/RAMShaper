@@ -1,5 +1,9 @@
 # Documentation Changelog
 
+## 0.3.57 — 2026-10-29 (latest)
+
+- **Trial runbook P3 made concrete** (follow-up to 0.3.55): the Elevated precondition is now stated in the contract's own terms — the OS low-memory condition (`CreateMemoryResourceNotification`) signaled in three consecutive valid observations spanning ≥ 2 s (contract 14 §4, `pressure_v1`) — plus its practical consequence for the 64 GiB dev machine: there is no percentage threshold; the kernel signals on low *physical availability*, so filling the commit charge alone may never fire it — the operator drives physical availability down (touch large allocations) and verifies via `low-memory-watch` that the state flips to `elevated` and holds. Also this push: the AT-06 attempt-4 live `watch.jsonl` untracked from git pre-verdict (it would reach ~150–200 MB, over GitHub's 100 MB reject limit; the stream stays on disk for the analyzer — RUN_LOG records the exclusion).
+
 ## 0.3.56 — 2026-10-29 (latest)
 
 - **RS-028 maintenance: README + FAQ current to the 0.3.55 surface.** README: the managed-launch bullet now reflects the shipped track (RS-020–023 + the gated `launch` command with its per-launch `LAUNCH` consent and never-detach/never-kill semantics), the policy-stage bullet names the `--trace` walk and the 2026-10-27 gate assessment, the Stage B bullet carries the trial-machinery status, and the command block gains `policies --dry-run [--trace]` and `launch -- <EXE> [ARGS...]`; revision footer 0.3.36 → 0.3.55. FAQ: new launch Q&A under Consent and actions (per-launch typed consent, one consent = one attempt, no kill-on-close/hard/time/process-count limits, not a sandbox, monitoring removal never detaches or stops the app, no retry). Docs-only.
