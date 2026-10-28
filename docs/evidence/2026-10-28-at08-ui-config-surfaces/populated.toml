@@ -1,0 +1,17 @@
+schema_version = 1
+mode = "observe_only"
+
+[watch]
+interval_ms = 1000
+retention_ms = 900000
+
+[agent]
+
+[cohort]
+declared = "none"
+
+[profiles]
+active = "low_ram"
+
+[exclusions]
+processes = ["vendor-updater.exe"]

@@ -35,7 +35,15 @@
   not spawned by this soak — if it belonged to a parallel session, that is
   what happened to it.
 
-## Attempt 3 — WMI + pythonw.exe host (ACTIVE)
+## Attempt 3 — WMI + pythonw.exe host (DIED AT THE OVERNIGHT SHUTDOWN; archived in attempt3-shutdown/)
+
+- Correction (2026-10-28): this attempt was launched 2026-10-24T20:17Z-local
+  minutes before the machine's recorded shutdown kill window
+  (~20:07–20:25Z on 10-24). It captured ~6 minutes of data (partial
+  soak.jsonl + watch.jsonl + driver.log, moved to attempt3-shutdown/) and
+  never reached window 1. The "(ACTIVE)" status below was stale — the
+  24-hour run recorded in the 2026-10-25 morning notes was the separate
+  target\soak rig, not this criteria-declared rig.
 
 - Host moved to `pythonw.exe` running `soak_driver.py` (windowless, all
   children CREATE_NO_WINDOW), launched via `Invoke-CimMethod Win32_Process
@@ -44,3 +52,31 @@
 - Record schema, cadence, pass criteria and analyzer are unchanged from
   attempts 1-2 (PASS_CRITERIA.md untouched; declared before the run).
 - Soak window anchors to the attempt-3 start time.
+
+## Attempt 4 — WMI + pythonw.exe host (ACTIVE, launched 2026-10-28)
+
+- Launched 2026-10-28T18:19:26Z via `Invoke-CimMethod Win32_Process Create`
+  (pythonw pid 17132), watch child pid 3156. Planned end
+  **2026-10-29T18:19:26Z** — the attempt completes only if the machine
+  stays up for 24 h (attempts 1–3 all died to external causes, never to
+  the rig).
+- Binaries: release build at this commit's source (0.3.50; the on-disk
+  release had been frozen since the 0.3.41 era). Record schema, cadence
+  and PASS_CRITERIA.md are UNCHANGED (criteria stay exactly as declared
+  2026-10-24; no mid-run loosening). The soak.jsonl start record's
+  `"driver_host":"pythonw.exe (attempt 3)"` label is the driver script's
+  static text — the script is byte-identical to attempt 3's; recorded
+  here rather than editing the driver post-launch.
+- Caveat carried into the verdict: C3 scan-latency exceeded its declared
+  limits on this loaded dev machine in attempt 2/3 interims (~440–500
+  processes vs the ~347-process baseline the thresholds were derived
+  from). The limits stay as declared; if the attempt-4 verdict repeats
+  that, the honest outcome is a recorded finding pointing at AT-21
+  cohort hardware, not a threshold change.
+- While the attempt runs: target
+elease
+amshaper-cli.exe and
+  ramshaper-bench.exe are held open by the rig — `cargo build --release`
+  will fail with os error 5 until the attempt ends (the recorded gotcha;
+  do NOT kill the rig to unblock a build).
+- attempt3-shutdown/watch.jsonl (60 MB, 6 minutes of the dead attempt) is preserved on disk but excluded from git per the recorded LFS-size guidance; the archive's small files (soak.jsonl, logs) are committed.

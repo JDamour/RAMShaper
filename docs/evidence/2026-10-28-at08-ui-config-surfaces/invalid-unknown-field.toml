@@ -1,0 +1,4 @@
+schema_version = 1
+[watch]
+interval_ms = 500
+bogus_field = true

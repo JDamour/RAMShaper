@@ -1,0 +1,155 @@
+=== AT-08 UI-portion config fixtures, 2026-10-28 (release build at 0.3.50) ===
+
+--- FIXTURE 1: fresh install (agent with NO --config): mode must be observe_only, profile balanced, no exclusions
+serving ramshaper-agent 0.1.0 on \\.\pipe\at08-fresh (interval 1000 ms); Ctrl+C to stop
+agent cli-8648-134376853496017413 listening; collector running
+{
+  "agent_instance_id": "cli-8648-134376853496017413",
+  "data": {
+    "capabilities": [
+      {
+        "name": "system_memory_counters",
+        "reason": null,
+        "supported": true
+      },
+      {
+        "name": "low_memory_notification",
+        "reason": null,
+        "supported": true
+      },
+      {
+        "name": "process_identity",
+        "reason": null,
+        "supported": true
+      }
+    ],
+    "protocol_version": 1,
+    "snapshot_interval_ms": 1000
+  },
+  "ok": true,
+  "request_id": "probe-GetCapabilities"
+}
+{
+  "agent_instance_id": "cli-8648-134376853496017413",
+  "data": {
+    "exclusions": [],
+    "mode": "observe_only",
+    "note": "profiles and exclusions are inert in this build; they never enable actions",
+    "profile": "balanced"
+  },
+  "ok": true,
+  "request_id": "probe-GetConfig"
+}
+
+--- FIXTURE 2: export default config, switch profile to low_ram + add exclusion, import, restart agent with it
+exported validated configuration to docs/evidence/2026-10-28-at08-ui-config-surfaces/exported-default.toml
+populated.toml written (low_ram + exclusion)
+error: docs/evidence/2026-10-28-at08-ui-config-surfaces/populated.toml is not a valid configuration: configuration is not valid TOML: TOML parse error at line 18, column 2
+   |
+18 | [exclusions]
+   |  ^^^^^^^^^^
+duplicate key
+
+error: cannot read config docs/evidence/2026-10-28-at08-ui-config-surfaces/installed.toml: The system cannot find the file specified. (os error 2)
+error: cannot connect to \\.\pipe\at08-imported: OS error 2 from CreateFileW
+
+--- FIXTURE 3: restart with the same config file: identical settings, mode still observe_only
+error: cannot read config docs/evidence/2026-10-28-at08-ui-config-surfaces/installed.toml: The system cannot find the file specified. (os error 2)
+error: cannot connect to \\.\pipe\at08-restart: OS error 2 from CreateFileW
+
+--- FIXTURE 4: unsupported schema/fields are rejected (unknown field + unknown profile)
+error: docs/evidence/2026-10-28-at08-ui-config-surfaces/invalid-unknown-field.toml is not a valid configuration: unknown field 'watch.bogus_field'
+import exit=2
+error: docs/evidence/2026-10-28-at08-ui-config-surfaces/invalid-profile.toml is not a valid configuration: unsupported profile 'turbo'; valid profiles: balanced, low_ram, focus, gaming_observe, custom
+import exit=2
+error: invalid config docs/evidence/2026-10-28-at08-ui-config-surfaces/invalid-unknown-field.toml: unknown field 'watch.bogus_field'
+agent exit=2
+
+--- FIXTURE 2 (retry): export default, set profile low_ram + exclusion IN the existing [exclusions] table, import, restart agent with it
+populated.toml written (low_ram + vendor-updater.exe exclusion)
+imported validated configuration into docs/evidence/2026-10-28-at08-ui-config-surfaces/installed.toml (mode: observe_only, profile: low_ram)
+serving ramshaper-agent 0.1.0 on \\.\pipe\at08-imported (interval 1000 ms); Ctrl+C to stop
+agent cli-45424-134376853905489041 listening; collector running
+--- GetConfig from the imported-config agent (what the UI's Profiles/Overview pages render):
+{
+  "agent_instance_id": "cli-45424-134376853905489041",
+  "data": {
+    "capabilities": [
+      {
+        "name": "system_memory_counters",
+        "reason": null,
+        "supported": true
+      },
+      {
+        "name": "low_memory_notification",
+        "reason": null,
+        "supported": true
+      },
+      {
+        "name": "process_identity",
+        "reason": null,
+        "supported": true
+      }
+    ],
+    "protocol_version": 1,
+    "snapshot_interval_ms": 1000
+  },
+  "ok": true,
+  "request_id": "probe-GetCapabilities"
+}
+{
+  "agent_instance_id": "cli-45424-134376853905489041",
+  "data": {
+    "exclusions": [
+      "vendor-updater.exe"
+    ],
+    "mode": "observe_only",
+    "note": "profiles and exclusions are inert in this build; they never enable actions",
+    "profile": "low_ram"
+  },
+  "ok": true,
+  "request_id": "probe-GetConfig"
+}
+
+--- FIXTURE 3: restart with the same config file: identical settings, mode still observe_only
+serving ramshaper-agent 0.1.0 on \\.\pipe\at08-restart (interval 1000 ms); Ctrl+C to stop
+agent cli-27608-134376853940129641 listening; collector running
+{
+  "agent_instance_id": "cli-27608-134376853940129641",
+  "data": {
+    "capabilities": [
+      {
+        "name": "system_memory_counters",
+        "reason": null,
+        "supported": true
+      },
+      {
+        "name": "low_memory_notification",
+        "reason": null,
+        "supported": true
+      },
+      {
+        "name": "process_identity",
+        "reason": null,
+        "supported": true
+      }
+    ],
+    "protocol_version": 1,
+    "snapshot_interval_ms": 1000
+  },
+  "ok": true,
+  "request_id": "probe-GetCapabilities"
+}
+{
+  "agent_instance_id": "cli-27608-134376853940129641",
+  "data": {
+    "exclusions": [
+      "vendor-updater.exe"
+    ],
+    "mode": "observe_only",
+    "note": "profiles and exclusions are inert in this build; they never enable actions",
+    "profile": "low_ram"
+  },
+  "ok": true,
+  "request_id": "probe-GetConfig"
+}

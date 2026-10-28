@@ -2761,3 +2761,34 @@ report a reused PID as "alive".
 AT-15: the instrumented-rig staged-failure matrix (debugger-injected
 crash boundaries inside CreateProcessW) — rig work; the creation-time
 design leaves only the two flanks as interruptible stages.
+
+---
+
+# AT-08 UI portion — config surfaces end to end, 2026-10-28
+
+The AT-08 UI-side clause completed (core/config portion Passed
+2026-10-24 with RS-012/RS-030):
+
+- **OS call audit:** `ramshaper-ui`'s complete OS surface is
+  `window::{find_window_by_title, is_iconic}` (query-only visibility for
+  the hidden-window rule) and the named-pipe IPC client. No setters, no
+  file writes, no process/job/priority APIs, no config writes. Settings
+  knowledge = one read-only `GetConfig` serve-time summary. There is NO
+  profile-selection control (the Profiles page marks the active preset;
+  selection lives in config/import — and a profile is not consent).
+  The UI's two policy commands reach the agent's consent gate; a
+  gateless production agent answers `Unsupported`, and even behind a
+  gate the OS write happens in the agent, never in the UI process.
+- **Live fixtures** (release build at this commit;
+  `docs/evidence/2026-10-28-at08-ui-config-surfaces/live-fixtures.txt`):
+  fresh install (no config) → GetConfig = observe_only/balanced/[] with
+  the inertness note; export → switch profile to low_ram + exclusion →
+  validated atomic import → agent serves low_ram + exclusion with mode
+  STILL observe_only; agent restart on the same file → identical
+  summary; unknown field and unknown profile → exit 2 (field-level
+  errors) on both `config import` and agent startup. Profiles-page
+  visuals: the 2026-10-24 PrintWindow captures are referenced, not
+  redone.
+- **Verdict:** AT-08 UI portion **Passed**. The G2 gate row's remaining
+  blockers are unchanged (Slint license = owner; AT-19 interactive =
+  human).
