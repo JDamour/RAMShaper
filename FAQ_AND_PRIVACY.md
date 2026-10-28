@@ -89,6 +89,24 @@ the setting safely?). Until a workload is tested and evidence recorded,
 (owner, foreground state, classification, capability) denies the action
 rather than guessing.
 
+### What does the `launch` command do, and what does it never do?
+
+`ramshaper-cli launch -- <EXE> [ARGS...]` starts one **new** process —
+exactly the executable you named, no PATH search, no shell, no shortcut
+resolution — inside a fresh *advisory* job and shows you its resource
+accounting until you press Ctrl+C (or `--stop-after-ms` elapses). It
+asks for consent **per launch**: the prompt shows the exact command
+line, any preflight notes and the semantics, and you type `LAUNCH` (that
+word, alone) or nothing happens. One consent covers at most one attempt.
+
+Just as important is what it never does: it never touches an existing
+process; the job has **no** kill-on-close, hard, time or process-count
+limits; it is **not** a sandbox and provides no security isolation;
+removing monitoring (closing the CLI) does **not** detach the process or
+stop the application — the association lasts for the process lifetime,
+and the app keeps running after the CLI exits. There is no retry: a
+declined or failed launch is simply that.
+
 ## Behavior
 
 ### Will this make my PC faster?

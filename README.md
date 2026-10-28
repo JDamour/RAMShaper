@@ -18,16 +18,26 @@ workload manager. Implemented and validated on Windows 11 build
   Narrator/DPI pass remains open).
 - **Policy stage, code-complete behind consent** (RS-015–019, RS-031,
   RS-016/017/018 engines, G3 glue): eligibility matrix with
-  unknown-denies, deterministic dry-run, SQLite action journal, restore
-  engine with bounded retries, guardrails, and the four policy IPC
-  commands. **Nothing can write a process setting until the operator
-  types the exact consent word (`ENABLE`) on the agent console** — the
-  compatibility allowlist ships empty because no workload has passed
-  Stage B testing yet.
-- **Managed-launch spike** (RS-020): creation-time job attributes
-  validated on this OS build; the G4 ticket track is separate.
-- **Benchmark harness** (RS-024): observer-overhead baseline and the
-  Stage B counterbalanced A/B workload runner feeding the AT-20 analysis.
+  unknown-denies, deterministic dry-run (with an optional user-authored
+  trace file), SQLite action journal, restore engine with bounded
+  retries, guardrails, and the four policy IPC commands. **Nothing can
+  write a process setting until the operator types the exact consent
+  word (`ENABLE`) on the agent console** — the compatibility allowlist
+  ships empty because no workload has passed Stage B testing yet. The
+  consolidated gate assessment (2026-10-27): every owner-independent
+  case Passed; sign-off waits on four owner/human actions.
+- **Managed-launch track** (RS-020–023): creation-time job attributes
+  validated, group observation/accounting, and the `launch` command —
+  one explicitly typed-consented launch per invocation into a fresh
+  advisory job, with monitoring removal that never detaches or kills.
+  The job is **not** a sandbox and membership is not detachable; the
+  launched application outlives the CLI. The managed-beta release gate
+  (G3 sign-off + the full launcher-crash lifecycle traces) stays open.
+- **Benchmark harness** (RS-024): observer-overhead baseline, the Stage
+  B counterbalanced A/B workload runner feeding the AT-20 analysis,
+  executable trial preregistration, and the rerun-bundle tooling. The
+  Stage B trial machinery is test-covered end to end; the first real
+  trial awaits owner decisions (the trial runbook is written).
 
 Evidence and limitations for every claim are in the
 [implementation evidence record](docs/docs/16_IMPLEMENTATION_EVIDENCE.md).
@@ -47,6 +57,13 @@ ramshaper-cli info --json          # same, as one versioned JSON object
 ramshaper-cli low-memory-watch     # sample memory + low-memory condition until Ctrl+C
 ramshaper-cli processes            # per-process memory/CPU/IO with two-scan rates
 ramshaper-cli config export|import # inert profile/exclusion config (validated, atomic)
+ramshaper-cli policies --dry-run   # SYNTHETIC policy decision walk (no OS access;
+                                   #   --trace <FILE> replays a user-authored walk)
+ramshaper-cli launch -- <EXE> [ARGS...]
+                                   # ONE typed-consented launch into a fresh advisory
+                                   #   job (word: LAUNCH, per launch, shown with the
+                                   #   exact command line); advisory monitoring, then
+                                   #   monitoring removal — never a detach or a kill
 
 ramshaper-agent serve              # per-session agent on \\.\pipe\... (read-only monitor)
 ramshaper-agent serve --policy-journal <PATH>
@@ -70,6 +87,7 @@ telemetry, consent, journal, recovery and IPC behavior. The
 requirements to tickets and observable tests. Architecture decisions are
 recorded in [doc 13](docs/docs/13_ARCHITECTURAL_DECISIONS.md).
 
-Documentation revision: **0.3.36, October 26, 2026** (policy stage,
-consent path and Actions UI documented; RS-028). See the
+Documentation revision: **0.3.55, October 29, 2026** (managed-launch
+track, `launch` command, `policies --trace`, Stage B trial machinery and
+gate verdicts documented; RS-028 maintenance). See the
 [documentation changelog](docs/CHANGELOG.md).

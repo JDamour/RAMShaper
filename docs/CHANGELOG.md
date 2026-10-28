@@ -1,5 +1,9 @@
 # Documentation Changelog
 
+## 0.3.56 — 2026-10-29 (latest)
+
+- **RS-028 maintenance: README + FAQ current to the 0.3.55 surface.** README: the managed-launch bullet now reflects the shipped track (RS-020–023 + the gated `launch` command with its per-launch `LAUNCH` consent and never-detach/never-kill semantics), the policy-stage bullet names the `--trace` walk and the 2026-10-27 gate assessment, the Stage B bullet carries the trial-machinery status, and the command block gains `policies --dry-run [--trace]` and `launch -- <EXE> [ARGS...]`; revision footer 0.3.36 → 0.3.55. FAQ: new launch Q&A under Consent and actions (per-launch typed consent, one consent = one attempt, no kill-on-close/hard/time/process-count limits, not a sandbox, monitoring removal never detaches or stops the app, no retry). Docs-only.
+
 ## 0.3.55 — 2026-10-29 (latest)
 
 - **Stage B chain closed end to end + the trial runbook.** (1) New integration test: the trial driver's emitted blocks file is fed to the **real `ramshaper-bench analyze-ab` binary** and comes back with a decision report — the last untested joint in the evidence chain (driver → blocks → analyzer) is now pinned by a test, not just claimed. Workspace **443 passed / 0 failed** serially. (2) **[stage-b-trial-runbook.md](design/stage-b-trial-runbook.md)** (design-memo ticket 5, runbook half): the executable procedure for the first consent-enabled trial — six preconditions (incl. the newly-named **P3: real Elevated memory-pressure evidence** — the gate honestly refuses previews without it, so trial day requires the machine genuinely under pressure, verified via `info`/watch, never faked), preregistration authoring, the consenting-agent steps (the **[ADR-045]** invocation left as the placeholder it is), the driver command, plan-frozen analysis, the rerun bundle, and honest-negative recording. The rehearsal is scheduled after ADR-045 (it needs a real consenting gate). Memo ticket list updated.
