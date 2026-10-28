@@ -321,3 +321,88 @@ fn the_subject_holds_until_go() {
     assert_eq!(record["completion"]["status"], "complete");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The full Stage B machinery seam, pinned end to end: the driver's
+/// emitted blocks file must be analyzable by the REAL `ramshaper-bench
+/// analyze-ab` binary (the trial evidence chain's last untested joint).
+#[test]
+fn the_drivers_blocks_file_is_analyzable_by_the_real_analyzer() {
+    let dir = temp_dir("analyzer");
+    let spec_path = write_spec(&dir);
+    let parsed = ramshaper_trial::Parsed {
+        pipe_name: "unused".to_string(),
+        subject: subject_exe(),
+        spec: spec_path,
+        blocks: 2,
+        seed: 5,
+        out: dir.join("blocks.json"),
+        run_prefix: "trial".to_string(),
+        exit_delay_ms: 0,
+    };
+    struct SilentRpc;
+    impl ramshaper_trial::AgentRpc for SilentRpc {
+        fn call(
+            &self,
+            request_id: &str,
+            command: &str,
+            _payload: Option<serde_json::Value>,
+        ) -> Result<serde_json::Value, String> {
+            match command {
+                ramshaper_core::ipc::COMMAND_PREVIEW_ACTION => {
+                    Ok(serde_json::json!({ "verdict": "offered" }))
+                }
+                ramshaper_core::ipc::COMMAND_CONFIRM_ACTION => {
+                    Ok(serde_json::json!({ "outcome": "applied" }))
+                }
+                ramshaper_core::ipc::COMMAND_RESTORE_ACTION => {
+                    Ok(serde_json::json!({ "outcome": "restored" }))
+                }
+                other => Err(format!("unexpected command {other} (request {request_id})")),
+            }
+        }
+    }
+    let blocks = ramshaper_trial::run_trial(&SilentRpc, &parsed).expect("trial completes");
+    let wire =
+        serde_json::to_string_pretty(&ramshaper_trial::blocks_to_wire(&blocks)).expect("serialize");
+    std::fs::write(&parsed.out, wire.as_bytes()).expect("write blocks file");
+
+    // The real analyzer (the DEBUG bench binary — the release one is held
+    // open by the running AT-06 soak; running either concurrently is
+    // harmless, but the debug one is what `cargo test` keeps fresh).
+    let bench = current_profile_bin("ramshaper-bench");
+    let out = Command::new(&bench)
+        .args([
+            "analyze-ab",
+            "--blocks",
+            parsed.out.to_str().expect("utf-8 path"),
+            "--json",
+        ])
+        .output()
+        .expect("run analyze-ab");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "analyze-ab must accept the driver's blocks: {:?} {}",
+        out.stderr,
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let report: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("a JSON report comes back");
+    assert!(
+        report.get("decision").is_some() || report.get("label").is_some(),
+        "the report carries a decision label: {report}"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Resolve a sibling workspace binary the same way [`subject_exe`] does.
+fn current_profile_bin(name: &str) -> PathBuf {
+    let exe = std::env::current_exe().expect("current test exe");
+    let profile_dir = exe
+        .parent()
+        .and_then(|deps| deps.parent())
+        .expect("target/<profile> directory");
+    let path = profile_dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    assert!(path.exists(), "{name} is not built: {}", path.display());
+    path
+}

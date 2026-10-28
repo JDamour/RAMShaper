@@ -2873,3 +2873,9 @@ Design-memo follow-up ticket 3 (after the subject binary, ticket 2):
   (+6 tests). Evidence: `docs/evidence/2026-10-28-ramshaper-trial/`.
   Remaining for a real trial (unchanged): ADR-045, real Elevated
   pressure evidence at trial time, and the owner's typed `ENABLE`.
+- **Follow-up (0.3.55):** the driver→blocks→analyzer seam is now
+  test-pinned (the real `analyze-ab` binary consumes the driver's
+  blocks file), and the trial **runbook** is written
+  ([design/stage-b-trial-runbook.md](../design/stage-b-trial-runbook.md)
+  — six preconditions incl. the real-Elevated-pressure requirement,
+  the [ADR-045] placeholder, plan-frozen analysis, bundle, recording).

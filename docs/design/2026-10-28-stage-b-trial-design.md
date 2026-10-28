@@ -137,8 +137,12 @@ is not consent; nothing is grantable over IPC). Machine-doable follow-up.
    AT-06 soak is off-limits; wire refusal path tested live against a real gateless
    agent; evidence `docs/evidence/2026-10-28-ramshaper-trial/`).
 4. Agent serve flags (machine-doable after 1).
-5. Runbook doc + a rehearsal with the observe-only path (machine-doable;
-   consent still owner-typed).
+5. Runbook — runbook half **DONE 2026-10-28**
+   ([stage-b-trial-runbook.md](stage-b-trial-runbook.md): the full
+   procedure incl. the newly-named real-Elevated-pressure precondition
+   P3; the agent invocation carries the [ADR-045] placeholder, and the
+   rehearsal is scheduled after the ADR because it needs a real
+   consenting gate).
 
 What remains owner after all of the above: the ADR-045 pick, typing `ENABLE`,
 the declared workload parameters, and running the trial. Machine-doable tickets
