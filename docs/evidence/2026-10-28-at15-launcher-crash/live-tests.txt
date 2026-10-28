@@ -1,0 +1,8 @@
+   Compiling ramshaper-windows v0.1.0 (F:\_RAMShaper\crates\ramshaper-windows)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.00s
+     Running tests\at15_lifecycle.rs (target\debug\deps\at15_lifecycle-4bff87121d85d928.exe)
+running 2 tests
+ERROR: The process "40392" not found.
+ok
+ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.37s

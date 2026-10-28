@@ -2710,3 +2710,54 @@ pressure elevates on the third consecutive elevated sample; a pending
 preview is re-offered; stale pressure does NOT resolve an active
 experiment. Workspace **425 passed / 0 failed** serially; fmt/clippy
 clean. Evidence: `docs/evidence/2026-10-28-policies-trace/`.
+
+---
+
+# AT-15 — launcher-crash lifecycle trace (in-process portion), 2026-10-28
+
+The AT-15 clause "the launcher crashes at each stage" traced live
+(`crates/ramshaper-windows/tests/at15_lifecycle.rs`, 2 tests): the crash
+stages discretize into three, and the two flanks are now real
+two-process evidence — the "launcher" is a re-exec of the test binary
+(env-var helper branch) that is **force-terminated** (`taskkill /F`; the
+same OS-level fact as a crash without an interactive WER dialog):
+
+- **After creation** (the money shot): the helper creates the fresh
+  advisory job + managed child, reports the child's PID, and is killed
+  the moment the report arrives. The parent then pins, across the real
+  process death: **exactly one child was ever reported** (no automatic
+  duplicate launch — now traced across a process boundary, not only
+  pinned by the consumed-consent token); the child is alive immediately
+  after; the child is **still in a job** (the job object survives while
+  a member exists — the non-detachable fact across a crash,
+  complementing RS-023's graceful removal); and the child **completes
+  unaided** (no suspended orphan, no kill-on-close).
+- **Before creation**: a launcher killed pre-spawn reports zero
+  children — nothing to orphan.
+- **Mid-creation** is not externally interruptible by construction:
+  with the creation-time `PROC_THREAD_ATTRIBUTE_JOB_LIST` (RS-020)
+  membership and birth are one syscall, so no crash can observe a
+  half-created child. That absence IS the no-suspended-orphan guarantee
+  (the superseded suspended-create design had the window).
+
+Method gotchas pinned in the test source: the stdout reader must stream
+(waiting for EOF deadlocks — EOF requires the kill, the kill requires
+the pid line), and the pid line must be matched anywhere in the line
+(libtest's partial `test <name> ... ` prefix concatenates onto it).
+
+**Committed alongside (mechanical, attributed):** the agent's
+`child_spawned_after_apply_is_inherited_then_trips_the_restore` probe
+window widened 25→60 s after two full-workspace-gate failures — root
+cause recorded: on a freshly built tree, Defender's real-time scan slows
+the powershell parent's cold start past 22 s, so the old window could
+expire while the parent was provably still running (success breaks out
+early, green runs pay nothing); the panic diagnostic now reads the held
+`Child` handle (`try_wait`) instead of `resolve_identity`, which could
+report a reused PID as "alive".
+
+**Gates (2026-10-28):** fmt/clippy (`-D warnings`) clean; workspace
+**427 passed / 0 failed** serially. Evidence:
+`docs/evidence/2026-10-28-at15-launcher-crash/`. Remaining for full
+AT-15: the instrumented-rig staged-failure matrix (debugger-injected
+crash boundaries inside CreateProcessW) — rig work; the creation-time
+design leaves only the two flanks as interruptible stages.

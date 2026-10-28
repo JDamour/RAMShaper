@@ -606,11 +606,15 @@ fn child_spawned_after_apply_is_inherited_then_trips_the_restore() {
     // spawns it 3 s after ITS start. The light Toolhelp parent-map is the
     // primary probe: under parallel-test churn the full scan's snapshot
     // can fail transiently (the documented Toolhelp behavior), and the
-    // map is cheap enough to retry at 150 ms. Window 25 s covers the
-    // child's full ~10 s life even with heavy machine load.
+    // map is cheap enough to retry at 150 ms. Window 60 s (was 25 s,
+    // widened 2026-10-28 after two full-workspace-gate failures): on a
+    // freshly built tree Defender's real-time scan slows the powershell
+    // cold start past 22 s — the window must not expire while the parent
+    // is provably still running (success breaks out early, so green runs
+    // pay nothing).
     let mut child_pid = None;
     let mut failed_probes = 0u32;
-    let child_deadline = Instant::now() + Duration::from_secs(25);
+    let child_deadline = Instant::now() + Duration::from_secs(60);
     while Instant::now() < child_deadline {
         match processes::enumerate_pid_parents() {
             Ok(rows) => {
@@ -627,10 +631,15 @@ fn child_spawned_after_apply_is_inherited_then_trips_the_restore() {
         std::thread::sleep(Duration::from_millis(150));
     }
     let child_pid = child_pid.unwrap_or_else(|| {
+        // The held Child handle is the truth (resolve_identity alone can
+        // read a REUSED pid as "alive" — the recorded reuse gotcha).
+        let parent_state = match parent.try_wait() {
+            Ok(None) => "alive",
+            Ok(Some(_)) => "exited",
+            Err(_) => "unqueryable",
+        };
         panic!(
-            "the parent must spawn its ping child; parent {} alive={}; failed_probes={failed_probes}",
-            pid,
-            resolve_identity(pid).is_ok(),
+            "the parent must spawn its ping child; parent {pid} {parent_state}; failed_probes={failed_probes}",
         );
     });
     // The child's exact identity, resolved fresh for the inheritance read.
