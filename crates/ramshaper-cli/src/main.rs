@@ -1,11 +1,17 @@
-//! `ramshaper-cli` — read-only diagnostics (G0: RS-001..RS-006; M1: RS-007..009).
+//! `ramshaper-cli` — diagnostics + the gated managed launcher (G0:
+//! RS-001..RS-006; M1: RS-007..009; G4: RS-023).
 //!
 //! Commands: `info [--json]`, `low-memory-watch [--json] [--interval-ms]`,
-//! `processes [--json] [--interval-ms]`, `--version`, `--help`.
+//! `processes [--json] [--interval-ms]`, `policies --dry-run [--json]`,
+//! `config export|import`, `launch [options] -- <PATH> [ARGS...]`,
+//! `--version`, `--help`.
 //! Contracts (doc 14 §8): stdout carries data only, diagnostics go to
 //! stderr; exit codes 0 success (incl. healthy Ctrl+C cancel), 1 runtime
-//! failure / no usable global sample, 2 usage or configuration error,
-//! 3 partial snapshot. No mutating command exists.
+//! failure / no usable global sample / declined consent, 2 usage or
+//! configuration error, 3 partial snapshot. Observation commands never
+//! mutate anything; `launch` creates a NEW process the operator typed a
+//! per-launch consent for, into a fresh advisory job — it never touches
+//! existing processes (RS-023).
 
 #![deny(unsafe_code)]
 
@@ -29,9 +35,14 @@ const DEFAULT_PROCESS_INTERVAL_MS: u64 = 500;
 const MIN_STOP_AFTER_MS: u64 = 1_000;
 /// Maximum graceful auto-stop duration (30 days).
 const MAX_STOP_AFTER_MS: u64 = 30 * 24 * 60 * 60 * 1000;
+/// Maximum advisory CPU threshold in milliseconds: the value converts to
+/// 100-ns units (×10_000) and must stay inside `i64` (the Win32 unit).
+const MAX_ADVISORY_CPU_MS: u64 = (i64::MAX / 10_000) as u64;
+/// Default launch monitoring interval (`--interval-ms` overrides).
+const DEFAULT_LAUNCH_INTERVAL_MS: u64 = 1_000;
 
 const HELP: &str = "\
-ramshaper-cli — read-only Windows memory diagnostics
+ramshaper-cli — Windows memory diagnostics + the gated managed launcher
 
 USAGE:
     ramshaper-cli <COMMAND> [OPTIONS]
@@ -42,6 +53,8 @@ COMMANDS:
     processes            List processes with memory, CPU and I/O (two-sample rates)
     policies             Inspect the policy decision layer (dry run only)
     config               Validate, export or atomically import TOML configuration
+    launch               Launch ONE explicitly chosen executable into a fresh
+                         advisory job (typed per-launch consent; RS-023)
 
 CONFIG USAGE:
     ramshaper-cli config export [--config <PATH>] <DEST>
@@ -58,6 +71,24 @@ POLICIES USAGE:
     `--policy-journal` flag on ramshaper-agent) and an allowlisted target
     (none exist until RS-024 Stage B testing).
 
+LAUNCH USAGE:
+    ramshaper-cli launch [--json] [--interval-ms <MS>] [--stop-after-ms <MS>]
+                         [--advisory-max-active <N>] [--advisory-max-cpu-ms <MS>]
+                         -- <PATH> [ARGS...]
+
+    Launches exactly the named image (no PATH search, no shell, no
+    shortcut/association resolution; shortcuts, scripts and non-executable
+    files fail explicitly) into a fresh ADVISORY job and prints group
+    accounting until Ctrl+C or --stop-after-ms, then REMOVES MONITORING and
+    exits. The prompt shows the exact command line, preflight facts and the
+    semantics; type LAUNCH (exactly, alone) to consent to this one launch.
+    A consent buys at most one attempt; a declined or failed launch is
+    never retried. Semantics (stated on every launch): the job is NOT a
+    sandbox and enforces nothing; membership is NOT detachable and lasts
+    for the process lifetime; removing monitoring does not detach or stop
+    the application; no kill-on-close, hard, time or process-count limits
+    exist. Existing processes are never touched (RS-023).
+
 `config export` writes validated TOML to DEST (defaults when --config is
 absent). `config import` validates SOURCE against the closed schema
 (field-level errors on any violation) and atomically replaces DEST; the
@@ -67,13 +98,22 @@ file - no OS settings, no other files (RS-012).
 
 OPTIONS:
     --json               JSON output (info/processes: one versioned object;
-                         watch: newline-delimited objects)
+                         watch/launch samples: newline-delimited objects plus
+                         a final summary for launch)
     --interval-ms <MS>   watch: poll interval (default 1000)
                          processes: rate window between two scans (default 500)
+                         launch: monitoring interval (default 1000)
                          range 100..=3600000
     --stop-after-ms <MS> watch: stop gracefully after MS milliseconds and
                          print the history summary (default: run until
                          Ctrl+C); range 1000..=2592000000
+                         launch: remove monitoring after MS milliseconds
+    --advisory-max-active <N>      launch: advisory live-member threshold
+                                   (0 = not evaluated, the default)
+    --advisory-max-cpu-ms <MS>     launch: advisory accumulated-CPU threshold
+                                   in milliseconds (0 = not evaluated, the
+                                   default); exceeding is REPORTED, never
+                                   enforced
     --into <DEST>        config import: destination file, replaced atomically
     --config <PATH>      Load a TOML configuration file (schema_version 1,
                          observe-only; invalid files exit 2)
@@ -81,16 +121,20 @@ OPTIONS:
     --help, -h           Print this help
 
 EXIT CODES:
-    0  success (including a healthy Ctrl+C-cancelled watch)
-    1  runtime failure / no usable global sample
-    2  usage or configuration error
+    0  success (including a healthy Ctrl+C-cancelled watch or monitoring
+       removal)
+    1  runtime failure / no usable global sample / launch declined or
+       refused
+    2  usage or configuration error (including an invalid launch request)
     3  partial snapshot (optional metric/truncation reported)
 
 Per-process access_denied/exited statuses are expected on protected processes
-and do not fail the processes command. This tool is strictly read-only: it
-queries OS counters and conditions and never changes process settings,
-priorities, working sets or jobs. No network connection, telemetry or update
-check is performed.
+and do not fail the processes command. The observation commands are strictly
+read-only: they query OS counters and conditions and never change process
+settings, priorities, working sets or jobs. `launch` is the one gated
+exception: it starts a NEW process you explicitly consent to, into a fresh
+advisory job, and never modifies an existing process. No network connection,
+telemetry or update check is performed.
 ";
 
 /// Parsed command line.
@@ -125,6 +169,32 @@ pub struct ConfigSpec {
     dest: PathBuf,
 }
 
+/// The `launch` request and its advisory thresholds (RS-023). Everything
+/// after `--` is the request: the first token is the exact image path, the
+/// rest is the verbatim argument string. The consent is NOT part of the
+/// spec — it is typed at run time or the launch never happens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchSpec {
+    executable: OsString,
+    arguments: String,
+    /// Advisory live-member threshold (0 = not evaluated).
+    advisory_max_active: u32,
+    /// Advisory accumulated-CPU threshold in milliseconds (0 = not
+    /// evaluated; converted to 100-ns units at run time).
+    advisory_max_cpu_ms: u64,
+}
+
+impl LaunchSpec {
+    fn empty() -> Self {
+        Self {
+            executable: OsString::new(),
+            arguments: String::new(),
+            advisory_max_active: 0,
+            advisory_max_cpu_ms: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Info,
@@ -132,6 +202,7 @@ pub enum Command {
     Processes,
     Policies,
     Config(ConfigSpec),
+    Launch(LaunchSpec),
 }
 
 /// Parse outcome (unit-testable, no I/O).
@@ -152,6 +223,10 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> ParseOutcome {
     let mut stop_after_ms: Option<u64> = None;
     let mut config_path: Option<PathBuf> = None;
     let mut into: Option<PathBuf> = None;
+    let mut advisory_active_seen = false;
+    let mut advisory_cpu_seen = false;
+    let mut advisory_max_active: Option<u32> = None;
+    let mut advisory_max_cpu_ms: Option<u64> = None;
 
     while let Some(arg) = args.next() {
         let text = arg.to_string_lossy();
@@ -164,6 +239,80 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> ParseOutcome {
                 Some(value) => config_path = Some(PathBuf::from(value)),
                 None => return ParseOutcome::UsageError("--config requires a path".into()),
             },
+            "--advisory-max-active" => match args.next() {
+                Some(value) => match value.to_string_lossy().parse::<u32>() {
+                    Ok(count) => {
+                        advisory_active_seen = true;
+                        advisory_max_active = Some(count);
+                    }
+                    Err(_) => {
+                        return ParseOutcome::UsageError(format!(
+                            "--advisory-max-active expects a number, got {}",
+                            value.to_string_lossy()
+                        ));
+                    }
+                },
+                None => {
+                    return ParseOutcome::UsageError(
+                        "--advisory-max-active requires a value".into(),
+                    );
+                }
+            },
+            "--advisory-max-cpu-ms" => match args.next() {
+                Some(value) => match value.to_string_lossy().parse::<u64>() {
+                    Ok(ms) if ms <= MAX_ADVISORY_CPU_MS => {
+                        advisory_cpu_seen = true;
+                        advisory_max_cpu_ms = Some(ms);
+                    }
+                    Ok(ms) => {
+                        return ParseOutcome::UsageError(format!(
+                            "--advisory-max-cpu-ms {ms} out of range (0..={MAX_ADVISORY_CPU_MS})"
+                        ));
+                    }
+                    Err(_) => {
+                        return ParseOutcome::UsageError(format!(
+                            "--advisory-max-cpu-ms expects a number, got {}",
+                            value.to_string_lossy()
+                        ));
+                    }
+                },
+                None => {
+                    return ParseOutcome::UsageError(
+                        "--advisory-max-cpu-ms requires a value".into(),
+                    );
+                }
+            },
+            "--" => {
+                // Everything after `--` is the launch request: the first
+                // token is the exact image path, the rest is the verbatim
+                // argument string. No flag is interpreted past this point.
+                let Some(Command::Launch(spec)) = &mut command else {
+                    return ParseOutcome::UsageError(
+                        "-- is only valid for launch (launch -- <PATH> [ARGS...])".into(),
+                    );
+                };
+                let tokens = args.by_ref();
+                let Some(executable) = tokens.next() else {
+                    return ParseOutcome::UsageError(
+                        "launch requires a request after `--` (launch -- <PATH> [ARGS...])".into(),
+                    );
+                };
+                spec.executable = executable;
+                let mut arguments = String::new();
+                for (index, token) in tokens.enumerate() {
+                    let Some(text) = token.to_str() else {
+                        return ParseOutcome::UsageError(format!(
+                            "launch argument {index} after `--` is not valid UTF-8; the \
+                             request must be expressible as text"
+                        ));
+                    };
+                    if !arguments.is_empty() {
+                        arguments.push(' ');
+                    }
+                    arguments.push_str(text);
+                }
+                spec.arguments = arguments;
+            }
             "--interval-ms" => match args.next() {
                 Some(value) => match value.to_string_lossy().parse::<u64>() {
                     Ok(ms) => {
@@ -233,6 +382,7 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> ParseOutcome {
             "low-memory-watch" if command.is_none() => command = Some(Command::LowMemoryWatch),
             "processes" if command.is_none() => command = Some(Command::Processes),
             "policies" if command.is_none() => command = Some(Command::Policies),
+            "launch" if command.is_none() => command = Some(Command::Launch(LaunchSpec::empty())),
             other => {
                 // The config subcommand takes positional paths: export has a
                 // single destination; import takes the source file (the
@@ -252,6 +402,11 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> ParseOutcome {
                         continue;
                     }
                 }
+                if matches!(command, Some(Command::Launch(_))) && !is_flag {
+                    return ParseOutcome::UsageError(
+                        "launch takes its request after `--` (launch -- <PATH> [ARGS...])".into(),
+                    );
+                }
                 return ParseOutcome::UsageError(if command.is_none() {
                     format!("unknown command '{other}'")
                 } else {
@@ -261,15 +416,15 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> ParseOutcome {
         }
     }
 
-    let Some(command) = command else {
+    let Some(mut command) = command else {
         return ParseOutcome::UsageError("missing command".into());
     };
     if command == Command::Info && interval_ms.is_some() {
         return ParseOutcome::UsageError("--interval-ms is not valid for info".into());
     }
-    if stop_after_ms.is_some() && command != Command::LowMemoryWatch {
+    if stop_after_ms.is_some() && !matches!(command, Command::LowMemoryWatch | Command::Launch(_)) {
         return ParseOutcome::UsageError(
-            "--stop-after-ms is only valid for low-memory-watch".into(),
+            "--stop-after-ms is only valid for low-memory-watch and launch".into(),
         );
     }
     if dry_run && command != Command::Policies {
@@ -279,6 +434,24 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> ParseOutcome {
         return ParseOutcome::UsageError(
             "policies requires --dry-run (the only supported mode)".into(),
         );
+    }
+    if (advisory_active_seen || advisory_cpu_seen) && !matches!(command, Command::Launch(_)) {
+        return ParseOutcome::UsageError(
+            "--advisory-max-active/--advisory-max-cpu-ms are only valid for launch".into(),
+        );
+    }
+    if let Command::Launch(spec) = &mut command {
+        if spec.executable.is_empty() {
+            return ParseOutcome::UsageError(
+                "launch requires a request after `--` (launch -- <PATH> [ARGS...])".into(),
+            );
+        }
+        if let Some(count) = advisory_max_active {
+            spec.advisory_max_active = count;
+        }
+        if let Some(ms) = advisory_max_cpu_ms {
+            spec.advisory_max_cpu_ms = ms;
+        }
     }
     if let Command::Config(spec) = &command {
         match spec.action {
@@ -463,6 +636,229 @@ fn run_config(spec: &ConfigSpec, config: &ramshaper_core::CoreConfig) -> ExitCod
     }
 }
 
+/// `launch` (RS-023): one typed-consented managed launch with advisory
+/// monitoring, then monitoring REMOVAL (a handle drop — never a detach,
+/// never a kill). stdout carries the launch record, monitoring samples and
+/// the removal summary; stderr carries the prompt, preflight notes and
+/// warnings. Exit 0 launched+removed, 1 declined or refused (explicit,
+/// never retried), 2 invalid request.
+#[cfg(windows)]
+fn run_launch(
+    spec: &LaunchSpec,
+    json: bool,
+    interval_ms: u64,
+    stop_after_ms: Option<u64>,
+) -> ExitCode {
+    use std::io::{BufRead as _, Read as _};
+    use std::time::Duration;
+
+    use ramshaper_core::watch::{WaitHandle as _, WaitOutcome};
+    use ramshaper_windows::console::ConsoleCancel;
+    use ramshaper_windows::job::{
+        compatibility_report, evaluate_advisory, AdvisoryStatus, AdvisoryThresholds,
+    };
+    use ramshaper_windows::launch::{
+        consent_decide, render_consent_prompt, LaunchRequest, ManagedLaunchSession,
+    };
+
+    let Ok(config) = WatchConfig::new(interval_ms) else {
+        eprintln!("error: invalid interval {interval_ms} ms");
+        return ExitCode::from(2);
+    };
+    let interval_ms = config.interval_ms();
+
+    let request = LaunchRequest::new(spec.executable.clone(), spec.arguments.clone());
+    if let Err(error) = request.validate() {
+        eprintln!("error: {error}");
+        return ExitCode::from(2);
+    }
+
+    // Preflight before the prompt (the launch captures its own copy).
+    let preflight = match compatibility_report(None, None) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("error: launcher preflight failed: {error:?}");
+            return ExitCode::from(1);
+        }
+    };
+    for note in &preflight.notes {
+        eprintln!("preflight: {note}");
+    }
+
+    // The typed consent: bounded read (the word is 6 bytes; the 4 KiB cap
+    // is the bounded-memory rule shared with the agent's consent path).
+    eprint!("{}", render_consent_prompt(&request, &preflight));
+    let _ = std::io::stderr().flush();
+    let mut line = String::new();
+    let read = std::io::stdin().lock().take(4_096).read_line(&mut line);
+    let typed = match read {
+        Ok(0) => None, // end of input: a decline, never a guess
+        Ok(_) => Some(line),
+        Err(_) => None,
+    };
+    let Some(consent) = consent_decide(typed.as_deref()) else {
+        eprintln!("launch declined; nothing was started");
+        return ExitCode::from(1);
+    };
+
+    let session = match ManagedLaunchSession::launch(request, consent) {
+        Ok(session) => session,
+        Err(error) => {
+            eprintln!("error: {error}");
+            return ExitCode::from(1);
+        }
+    };
+    let pid = session.child_pid();
+    let command_line = session.request().command_line();
+    let thresholds = AdvisoryThresholds {
+        max_active_processes: spec.advisory_max_active,
+        max_total_cpu_time_100ns: advisory_cpu_100ns(spec.advisory_max_cpu_ms),
+    };
+
+    if json {
+        let record = serde_json::json!({
+            "schema": "ramshaper.launch.v1",
+            "event": "launched",
+            "pid": pid,
+            "request": {
+                "executable": session.request().executable.to_string_lossy(),
+                "arguments": session.request().arguments,
+                "command_line": command_line,
+            },
+            "preflight_notes": session.preflight().notes,
+            "limit_flags": session.limit_flags().ok(),
+        });
+        println!("{record}");
+    } else {
+        println!("launched pid {pid}: {command_line}");
+    }
+
+    let Ok(cancel) = ConsoleCancel::install() else {
+        eprintln!("error: failed to install the Ctrl+C handler; refusing an uncancellable monitor");
+        drop(session); // remove monitoring: drop the view, the app keeps running
+        eprintln!("monitoring removed; pid {pid} keeps running");
+        return ExitCode::from(1);
+    };
+    let cancel = std::sync::Arc::new(cancel);
+    if let Some(stop_after_ms) = stop_after_ms {
+        eprintln!("removing monitoring after {stop_after_ms} ms (the application keeps running)");
+        let timer_cancel = std::sync::Arc::clone(&cancel);
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(stop_after_ms));
+            timer_cancel.trigger();
+        });
+    }
+    eprintln!(
+        "monitoring pid {pid} every {interval_ms} ms; Ctrl+C removes monitoring (the application keeps running)"
+    );
+
+    let mut samples: u64 = 0;
+    loop {
+        samples += 1;
+        match session.accounting() {
+            Ok(accounting) => {
+                let flags = session.limit_flags().ok();
+                let advisory_codes = match evaluate_advisory(&accounting, &thresholds) {
+                    AdvisoryStatus::Within => Vec::new(),
+                    AdvisoryStatus::Exceeded(exceeded) => exceeded.codes(),
+                };
+                if json {
+                    let sample = serde_json::json!({
+                        "schema": "ramshaper.launch-sample.v1",
+                        "sequence": samples,
+                        "pid": pid,
+                        "active_processes": accounting.active_processes,
+                        "total_cpu_time_100ns": accounting.total_cpu_time_100ns(),
+                        "limit_flags": flags,
+                        "advisory_exceeded": advisory_codes,
+                    });
+                    println!("{sample}");
+                } else {
+                    let advisory = if advisory_codes.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  advisory exceeded: {}", advisory_codes.join(", "))
+                    };
+                    println!(
+                        "sample {:>4}  pid {}  active {}  cpu {:.3} s  flags {}{advisory}",
+                        samples,
+                        pid,
+                        accounting.active_processes,
+                        accounting.total_cpu_time_100ns() as f64 / 10_000_000.0,
+                        flags.map_or("unavailable".to_string(), |f| f.to_string()),
+                    );
+                }
+                let _ = std::io::stdout().flush();
+            }
+            Err(error) => eprintln!("warning: accounting query failed: {error:?}"),
+        }
+        match cancel.wait(interval_ms.min(u32::MAX as u64) as u32) {
+            WaitOutcome::Signaled => break,
+            WaitOutcome::TimedOut => {}
+        }
+    }
+
+    let preflight_notes = session.preflight().notes.clone();
+    let removed = session.remove_monitoring();
+    if json {
+        let final_obj = serde_json::json!({
+            "schema": "ramshaper.launch.v1",
+            "event": "monitoring_removed",
+            "pid": removed.child_pid,
+            "request": {
+                "executable": spec.executable.to_string_lossy(),
+                "arguments": spec.arguments,
+                "command_line": command_line,
+            },
+            "preflight_notes": preflight_notes,
+            "final_limit_flags": removed.final_limit_flags,
+            "final_accounting": removed.final_accounting.map(|a| serde_json::json!({
+                "total_processes": a.total_processes,
+                "active_processes": a.active_processes,
+                "terminated_processes": a.terminated_processes,
+                "total_cpu_time_100ns": a.total_cpu_time_100ns(),
+                "total_page_faults": a.total_page_faults,
+            })),
+            "statements": removed.statements,
+            "samples": samples,
+        });
+        println!("{final_obj}");
+    } else {
+        println!();
+        println!(
+            "monitoring removed for pid {} (launched {command_line})",
+            removed.child_pid
+        );
+        match removed.final_accounting {
+            Some(accounting) => println!(
+                "  final accounting: active {}, total processes {}, cpu {:.3} s, page faults {}",
+                accounting.active_processes,
+                accounting.total_processes,
+                accounting.total_cpu_time_100ns() as f64 / 10_000_000.0,
+                accounting.total_page_faults,
+            ),
+            None => println!("  final accounting: unavailable (the final query failed)"),
+        }
+        println!(
+            "  final limit flags: {}",
+            removed
+                .final_limit_flags
+                .map_or("unavailable".to_string(), |f| f.to_string())
+        );
+        for statement in &removed.statements {
+            println!("  semantics: {statement}");
+        }
+        println!("the application keeps running; monitoring was removed, nothing was detached or stopped");
+    }
+    ExitCode::SUCCESS
+}
+
+/// Advisory CPU threshold conversion: milliseconds to 100-ns units (the
+/// parse-time cap keeps the product inside `i64`).
+fn advisory_cpu_100ns(ms: u64) -> i64 {
+    i64::try_from(ms.saturating_mul(10_000)).unwrap_or(i64::MAX)
+}
+
 fn run(args: CliArgs) -> ExitCode {
     let config = match load_config(args.config_path.as_ref()) {
         Ok(config) => config,
@@ -484,6 +880,12 @@ fn run(args: CliArgs) -> ExitCode {
             args.interval_ms.unwrap_or(DEFAULT_PROCESS_INTERVAL_MS),
         ),
         Command::Policies => run_policies(args.json),
+        Command::Launch(spec) => run_launch(
+            &spec,
+            args.json,
+            args.interval_ms.unwrap_or(DEFAULT_LAUNCH_INTERVAL_MS),
+            args.stop_after_ms,
+        ),
     }
 }
 
@@ -948,6 +1350,17 @@ fn run_processes(_json: bool, _interval_ms: u64) -> ExitCode {
     ExitCode::from(1)
 }
 
+#[cfg(not(windows))]
+fn run_launch(
+    _spec: &LaunchSpec,
+    _json: bool,
+    _interval_ms: u64,
+    _stop_after_ms: Option<u64>,
+) -> ExitCode {
+    eprintln!("error: ramshaper-cli requires the Windows adapter; this platform is not supported");
+    ExitCode::from(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1189,5 +1602,188 @@ mod tests {
         assert!(HELP.contains("policies"));
         assert!(HELP.contains("--dry-run"));
         assert!(HELP.contains("SYNTHETIC"));
+    }
+
+    fn launch_spec(executable: &str, arguments: &str) -> LaunchSpec {
+        LaunchSpec {
+            executable: OsString::from(executable),
+            arguments: arguments.to_string(),
+            advisory_max_active: 0,
+            advisory_max_cpu_ms: 0,
+        }
+    }
+
+    #[test]
+    fn parses_the_launch_request_after_the_separator() {
+        match parse(&[
+            "launch",
+            "--",
+            "C:\\Windows\\System32\\ping.exe",
+            "-n",
+            "4",
+            "127.0.0.1",
+        ]) {
+            ParseOutcome::Run(args) => {
+                assert_eq!(
+                    args.command,
+                    Command::Launch(launch_spec(
+                        "C:\\Windows\\System32\\ping.exe",
+                        "-n 4 127.0.0.1"
+                    ))
+                );
+            }
+            other => panic!("launch request must parse: {other:?}"),
+        }
+        // A request with no arguments.
+        assert_eq!(
+            parse(&["launch", "--", "C:\\tools\\app.exe"]),
+            ParseOutcome::Run(CliArgs {
+                command: Command::Launch(launch_spec("C:\\tools\\app.exe", "")),
+                ..default_args(Command::Info)
+            })
+        );
+        // Flags may precede the separator; thresholds fold into the spec.
+        assert_eq!(
+            parse(&[
+                "launch",
+                "--json",
+                "--interval-ms",
+                "250",
+                "--stop-after-ms",
+                "5000",
+                "--advisory-max-active",
+                "3",
+                "--advisory-max-cpu-ms",
+                "1500",
+                "--",
+                "C:\\tools\\app.exe",
+            ]),
+            ParseOutcome::Run(CliArgs {
+                command: Command::Launch(LaunchSpec {
+                    advisory_max_active: 3,
+                    advisory_max_cpu_ms: 1_500,
+                    ..launch_spec("C:\\tools\\app.exe", "")
+                }),
+                json: true,
+                interval_ms: Some(250),
+                stop_after_ms: Some(5_000),
+                dry_run: false,
+                config_path: None,
+            })
+        );
+    }
+
+    #[test]
+    fn launch_request_rules() {
+        // No request at all.
+        assert!(matches!(
+            parse(&["launch"]),
+            ParseOutcome::UsageError(ref m) if m.contains("requires a request")
+        ));
+        // A bare `--` with nothing after it.
+        assert!(matches!(
+            parse(&["launch", "--"]),
+            ParseOutcome::UsageError(ref m) if m.contains("requires a request")
+        ));
+        // Positionals before `--` are refused (the request lives after it).
+        assert!(matches!(
+            parse(&["launch", "C:\\tools\\app.exe"]),
+            ParseOutcome::UsageError(ref m) if m.contains("after `--`")
+        ));
+        // The separator is launch-only.
+        assert!(matches!(
+            parse(&["info", "--"]),
+            ParseOutcome::UsageError(ref m) if m.contains("only valid for launch")
+        ));
+        assert!(matches!(
+            parse(&["--", "C:\\x.exe"]),
+            ParseOutcome::UsageError(ref m) if m.contains("only valid for launch")
+        ));
+        // A non-UTF-8 argument is an explicit usage error, never silent
+        // lossy conversion.
+        let mut raw: Vec<OsString> = vec![OsString::from("launch"), OsString::from("--")];
+        raw.push(OsString::from("C:\\tools\\app.exe"));
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt as _;
+            raw.push(OsString::from_wide(&[0xD800])); // lone surrogate
+            assert!(matches!(
+                parse_args(raw),
+                ParseOutcome::UsageError(ref m) if m.contains("not valid UTF-8")
+            ));
+        }
+    }
+
+    #[test]
+    fn advisory_flags_are_launch_only_and_bounded() {
+        assert!(matches!(
+            parse(&["--advisory-max-active", "3", "info"]),
+            ParseOutcome::UsageError(ref m) if m.contains("only valid for launch")
+        ));
+        assert!(matches!(
+            parse(&["--advisory-max-cpu-ms", "10", "low-memory-watch"]),
+            ParseOutcome::UsageError(ref m) if m.contains("only valid for launch")
+        ));
+        assert!(matches!(
+            parse(&["launch", "--advisory-max-active"]),
+            ParseOutcome::UsageError(_)
+        ));
+        assert!(matches!(
+            parse(&["launch", "--advisory-max-active", "x", "--", "a.exe"]),
+            ParseOutcome::UsageError(_)
+        ));
+        assert!(matches!(
+            parse(&[
+                "launch",
+                "--advisory-max-cpu-ms",
+                "99999999999999999999",
+                "--",
+                "a.exe"
+            ]),
+            ParseOutcome::UsageError(_)
+        ));
+        // The boundary itself parses (it converts to i64 100-ns units).
+        let boundary = (i64::MAX / 10_000).to_string();
+        assert!(matches!(
+            parse(&["launch", "--advisory-max-cpu-ms", &boundary, "--", "a.exe"]),
+            ParseOutcome::Run(_)
+        ));
+    }
+
+    #[test]
+    fn advisory_cpu_conversion_stays_inside_i64() {
+        assert_eq!(advisory_cpu_100ns(0), 0);
+        assert_eq!(advisory_cpu_100ns(1_500), 15_000_000);
+        // The capped boundary converts exactly (no saturation needed).
+        assert_eq!(
+            advisory_cpu_100ns(MAX_ADVISORY_CPU_MS),
+            9_223_372_036_854_770_000
+        );
+    }
+
+    #[test]
+    fn stop_after_ms_is_valid_for_launch_too() {
+        assert!(matches!(
+            parse(&["launch", "--stop-after-ms", "5000", "--", "a.exe"]),
+            ParseOutcome::Run(_)
+        ));
+        // Still refused elsewhere.
+        assert!(matches!(
+            parse(&["processes", "--stop-after-ms", "5000"]),
+            ParseOutcome::UsageError(ref m) if m.contains("low-memory-watch and launch")
+        ));
+    }
+
+    #[test]
+    fn help_documents_the_launch_command() {
+        assert!(HELP.contains("launch"));
+        assert!(HELP.contains("LAUNCH (exactly, alone)"));
+        // The semantics sentences are line-wrapped in HELP; assert the
+        // load-bearing fragments individually.
+        assert!(HELP.contains("the job is NOT a"));
+        assert!(HELP.contains("sandbox and enforces nothing"));
+        assert!(HELP.contains("NOT detachable"));
+        assert!(HELP.contains("--advisory-max-active"));
+        assert!(HELP.contains("--advisory-max-cpu-ms"));
     }
 }

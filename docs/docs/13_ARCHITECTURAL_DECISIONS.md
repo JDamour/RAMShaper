@@ -860,3 +860,50 @@ itself (owner) plus, if a release happens, the signing and installer work
 that decision implies. The uninstall contract's "tell the user the
 retained recovery location" is satisfied by the FAQ section plus the
 agent's journal-path-is-explicit design.
+
+## ADR-044: Launch consent is typed per launch; removal is monitoring-only; jobs stay non-sandbox facts — Accepted (RS-023, implemented 2026-10-28; evidence in [16](16_IMPLEMENTATION_EVIDENCE.md))
+
+**Context:** RS-023 (launch consent and explicit non-sandbox/
+non-detachable semantics; remove monitoring only) on top of the RS-020–022
+job work. The policy stage had already established the session-consent
+pattern (ADR-038: a typed console act, never a flag, never derivable from
+configuration).
+
+**Decisions:**
+- **Consent is per launch, not per session.** Every single launch asks.
+  The word is `LAUNCH` — deliberately distinct from the policy stage's
+  `ENABLE` so the two gates cannot be confused. The prompt displays the
+  exact command line, the preflight compatibility notes and the four
+  semantics statements before the word is read; consenting after seeing
+  a launcher-job nesting note IS the explicit acceptance the RS-021
+  compatibility report called for.
+- **One consent buys at most one attempt.** `LaunchConsent` is a
+  move-consumed token with a private field; `launch()` takes it by value,
+  so a declined, failed or succeeded attempt always exhausts it and any
+  retry requires a fresh typed act. "No silent unmanaged retry or
+  duplicate launch" (P0-04) is enforced by the type system, not by
+  discipline.
+- **The launch is an exact image.** `lpApplicationName` is passed
+  explicitly (`ManagedChild::spawn_exact`): no PATH search, no shell, no
+  shortcut/association/broker resolution. A non-executable target fails
+  with the OS's own error; the consented command line is built by the
+  same function the prompt displays.
+- **Removal is monitoring-only, by construction.** There is no detach,
+  kill, suspend or limit call anywhere in the launch surface. Removing
+  monitoring drops the monitoring handles after querying final facts;
+  membership persists (the job lives while members do), the application
+  outlives the session, and the four semantics statements (not a sandbox;
+  not detachable; removal stops nothing; no kill-on-close or limits) are
+  part of the module's API so any future UI must surface them — AT-16's
+  "never promises detachment or sandboxing" as affirmative copy.
+- **The capability ships behind its gate; the release does not.** As with
+  the policy stage, the consent-gated command exists (`ramshaper-cli
+  launch`) while the managed-beta release decision (G3 sign-off + full
+  AT-15 lifecycle traces) remains open.
+
+**Consequences:** the launcher's remaining blockers are exactly the gate
+items: consent-enabled trials need the owner's G3 actions, and AT-15's
+actual mid-creation interruption traces need rig work. The per-launch
+consent means automation cannot batch launches silently — a deliberate
+cost. If a future UI grants launch consent interactively, that is a new
+decision (this ADR covers the typed console path only).

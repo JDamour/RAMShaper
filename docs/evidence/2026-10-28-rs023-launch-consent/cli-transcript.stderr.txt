@@ -1,0 +1,10 @@
+Managed launch request
+  command line : C:/Windows/System32/ping.exe -n 12 127.0.0.1
+  job          : fresh advisory job (zero limits, queried)
+  preflight    : no compatibility notes
+  semantics    : the job is not a sandbox: it provides no security isolation and enforces nothing
+  semantics    : membership is not detachable and lasts for the process lifetime
+  semantics    : removing monitoring does not detach the process or stop the application
+  semantics    : no kill-on-close, hard, time or process-count limits exist on this job
+type LAUNCH (exactly, alone) to consent to this one launch; anything else declines: removing monitoring after 2500 ms (the application keeps running)
+monitoring pid 23220 every 500 ms; Ctrl+C removes monitoring (the application keeps running)

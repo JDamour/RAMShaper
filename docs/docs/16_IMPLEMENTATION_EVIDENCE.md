@@ -2583,3 +2583,87 @@ workspace **400 passed, 0 failed** parallel —
 `docs/evidence/2026-10-27-rs026-round2/`. Not reviewed this round: the
 sibling session's in-flight job.rs compatibility surface (0.3.44 landed
 it; their round).
+
+---
+
+# RS-023 — launch consent + explicit non-sandbox/non-detachable semantics, 2026-10-28
+
+**Scope implemented:** the managed-launch capability surface (doc 07
+RS-023; P0-04; AT-16), layered on the RS-020/021/022 job work:
+
+- `ramshaper-windows::launch` (new module) — the consent flow and the
+  managed session:
+  - `LaunchRequest` (exact executable path + verbatim argument string)
+    with validation: non-empty, no NUL, existing regular file.
+    Shortcuts, scripts, directories and non-executable files fail
+    explicitly — never silently resolved (P0-04 scope).
+  - Typed **per-launch** consent: strict word `LAUNCH` (alone on the
+    line; EOF and read errors decline, never guess), a distinct word
+    from the policy stage's `ENABLE` so the two consent surfaces cannot
+    be confused. `LaunchConsent` is a move-consumed token with a private
+    field: **one consent buys at most one launch attempt** — an
+    automatic retry or duplicate launch is unrepresentable, and the
+    type system enforces it (the "no automatic duplicate launch" clause
+    of AT-15's shape).
+  - `render_consent_prompt` displays the exact command line, the
+    preflight compatibility notes and the four semantics statements
+    BEFORE the consent is read — nesting in a pre-existing launcher job
+    (this dev machine's normal state) is shown and accepted explicitly
+    by consenting after it is displayed (the RS-021 "refuse or accept
+    nesting explicitly" decision, resolved as explicit acceptance).
+  - `ManagedLaunchSession::launch`: fresh `AdvisoryJob` +
+    creation-time spawn + the membership proof; `remove_monitoring`
+    queries the final accounting and limit flags BEFORE dropping the
+    monitoring handles and returns the child handle plus the semantics
+    statements. Removal is a handle drop — **never a detach, never a
+    kill** (no such call exists in the module).
+- `ramshaper-windows::job` additions: `ManagedChild::spawn_exact` —
+  explicit `lpApplicationName`, so the OS launches exactly the named
+  image: no PATH search, no shell, no shortcut/association resolution.
+  The shared creation core was factored into `create_managed`; the
+  membership proof now distinguishes a query failure from a false
+  answer via the new `JobError::MembershipUnverified` (the child may
+  exist unmanaged — reported, never retried). `exact_command_line` is
+  shared with the consent display so what is shown is byte-identical to
+  what is executed.
+- `ramshaper-cli launch [options] -- <PATH> [ARGS...]` — the shipped
+  command (contract 14 §7: "managed-launch commands appear only with
+  their gated capabilities"; the gate here is the typed per-launch
+  consent, default closed): prompt → consent → launch → advisory
+  monitoring loop (accounting samples, optional thresholds) →
+  `remove_monitoring` summary → exit. `--advisory-max-active` /
+  `--advisory-max-cpu-ms` feed the RS-022 pure evaluator (exceeding is
+  reported, never enforced); `--json` emits `ramshaper.launch.v1` /
+  `ramshaper.launch-sample.v1`. Exit codes: 0 launched+removed,
+  1 declined or refused (explicit outcome), 2 invalid request. The
+  child inherits the console, so its output interleaves with the
+  CLI's — cosmetic, documented.
+
+**AT-16 pins (all live):** queried limit flags are 0 at launch, in every
+sample and at removal; the CLI process exits and the launched app
+remains alive (`docs/evidence/2026-10-28-rs023-launch-consent/
+survival-check.txt`: CLI gone at t+1.2 s, PING.EXE alive at t+6 s,
+explicit-PID cleanup); membership persists after every monitoring handle
+is dropped (the kernel keeps the job while a member exists — the
+non-detachable fact, asserted in the library test); a non-executable
+file fails with the explicit `CreateProcessW` error 193.
+
+**Boundaries kept:** no kill/suspend/detach/retry/limit path anywhere in
+the new surface; no persisted or configuration-derived consent (a
+profile/import is not consent — AGENTS rule 13); existing processes are
+never touched. The managed-beta RELEASE gate stays as the matrix defines
+it (G3 sign-off + the full AT-15 actual-lifecycle traces = rig work):
+this is the gated capability surface, the same pattern as the policy
+stage. The UI-copy clause of AT-16 ("UI never promises detachment or
+sandboxing") is carried by the CLI prompt/statements; a launch UI does
+not exist yet, and the statements are the module-level API any future UI
+must surface.
+
+**Gates (2026-10-28):** fmt + clippy (`-D warnings`) clean workspace-wide
+(one mechanical `unused_mut` fix on an RS-022-era job test that the
+0.3.45 gates missed — the flake fix folded in after their clippy run);
+workspace **416 passed / 0 failed** serially (windows crate serially per
+the RS-022 note; the one parallel-run failure was the recorded transient
+`CreateProcessW` code-5 under spawn load, green on the serial rerun).
+New tests: launch module 10 (2 live) + CLI parser 6. Evidence:
+`docs/evidence/2026-10-28-rs023-launch-consent/`. ADR-044.

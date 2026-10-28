@@ -1,0 +1,16 @@
+test job::tests::failed_launch_reports_error_and_leaves_the_job_empty ... ok
+test launch::tests::a_declined_consent_never_reaches_the_launcher ... ok
+test launch::tests::a_nonexecutable_request_fails_explicitly_and_launches_nothing ... ok
+test launch::tests::command_line_quotes_paths_with_spaces_and_appends_arguments ... ok
+test launch::tests::consent_is_not_constructable_without_the_word ... ok
+test launch::tests::consent_prompt_displays_the_exact_request_and_semantics ... ok
+test launch::tests::consented_launch_monitors_and_removal_leaves_the_app_alive ... 
+test launch::tests::launch_error_display_is_explicit ... ok
+test launch::tests::only_the_exact_word_consents ... ok
+test launch::tests::statements_state_the_at16_semantics ... ok
+test launch::tests::validation_rejects_unusable_requests ... ok
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 37 filtered out; finished in 4.39s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.56s

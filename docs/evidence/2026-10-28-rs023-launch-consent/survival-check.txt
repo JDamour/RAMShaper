@@ -1,0 +1,4 @@
+verification (t+6s after launch, ~5s after monitoring removal):
+Image Name:   PING.EXE
+PID:          44064
+verdict: the launched application is ALIVE after the CLI exited and monitoring was removed (AT-16: process lifetime)

@@ -24,16 +24,18 @@
 //! RS-021 adds the read-only observation half: membership observation of
 //! any process (`observe_membership`), the launcher compatibility report
 //! (detect preexisting jobs — never escape them), active-process
-//! accounting and child-inheritance evidence. Still no production
-//! caller; the managed launcher stays unavailable in the shipped surface
-//! (doc 07: keep the launcher unavailable if the safety gate fails). A
-//! real mid-`CreateProcessW` interruption trace (AT-15's lifecycle
-//! evidence) is G4 rig work; this module pins the crash-window *shape*
-//! by construction.
+//! accounting and child-inheritance evidence. RS-023 adds the production
+//! caller: the launch-consent flow in [`crate::launch`] (typed per-launch
+//! consent, exact-image creation via `spawn_exact`, monitoring removal by
+//! handle drop). A real mid-`CreateProcessW` interruption trace (AT-15's
+//! lifecycle evidence) is G4 rig work; this module pins the crash-window
+//! *shape* by construction.
 
 use std::mem::size_of;
 use std::mem::size_of_val;
+use std::os::windows::ffi::OsStrExt as _;
 
+use windows::core::PCWSTR;
 use windows::core::PWSTR;
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Foundation::WAIT_EVENT;
@@ -83,6 +85,11 @@ pub enum JobError {
         /// The failing function, for the audit trail.
         function: &'static str,
     },
+    /// The child was created but the membership proof through its own
+    /// handle did not confirm the advisory job (query failure or a false
+    /// answer). **The child may exist UNMANAGED** — the explicit outcome
+    /// P0-04 requires; the caller reports it and never retries silently.
+    MembershipUnverified,
 }
 
 impl JobError {
@@ -539,13 +546,57 @@ impl ManagedChild {
     ///
     /// # Errors
     /// [`JobError::Os`] on any failed step (attribute list, process
-    /// creation, membership verification).
+    /// creation, membership verification) and
+    /// [`JobError::MembershipUnverified`] when the child exists but the
+    /// membership proof did not confirm the job.
     pub fn spawn(job: &AdvisoryJob, command_line: &str) -> Result<Self, JobError> {
         let mut wide: Vec<u16> = command_line
             .encode_utf16()
             .chain(std::iter::once(0))
             .collect();
+        Self::create_managed(job, None, &mut wide)
+    }
 
+    /// Spawn an **exact** executable image with explicit arguments into
+    /// `job` (the RS-023 launch-consent flow). `application_name` is passed
+    /// as `lpApplicationName`: the OS launches exactly that image — no PATH
+    /// search, no shell, no shortcut/association resolution — so a
+    /// non-executable file fails with an explicit OS error instead of
+    /// silently resolving through a broker (P0-04: shortcuts, scripts,
+    /// shell associations and packaged-app brokers are out of launcher
+    /// scope). `arguments` are appended to the child command line verbatim
+    /// (CreateProcessW never invokes a shell to interpret them).
+    ///
+    /// # Errors
+    /// [`JobError::Os`] on any failed step (including a refused
+    /// `CreateProcessW` — nothing is launched and the job stays empty) and
+    /// [`JobError::MembershipUnverified`] when the child exists but the
+    /// membership proof did not confirm the job.
+    pub fn spawn_exact(
+        job: &AdvisoryJob,
+        application_name: &std::ffi::OsStr,
+        arguments: &str,
+    ) -> Result<Self, JobError> {
+        let command_line = exact_command_line(application_name, arguments);
+        let mut app_wide: Vec<u16> = application_name
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut cmd_wide: Vec<u16> = command_line
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        Self::create_managed(job, Some(&mut app_wide), &mut cmd_wide)
+    }
+
+    /// The shared creation-time path: one attribute (the job), one
+    /// `CreateProcessW` with no suspension, then the membership proof
+    /// through the child's own handle.
+    fn create_managed(
+        job: &AdvisoryJob,
+        application_name: Option<&mut Vec<u16>>,
+        command_line: &mut Vec<u16>,
+    ) -> Result<Self, JobError> {
         // Size the attribute list (the null call fails with
         // ERROR_INSUFFICIENT_BUFFER and fills the required size).
         let mut size = 0usize;
@@ -589,17 +640,21 @@ impl ManagedChild {
             lpAttributeList: attributes.list,
         };
         let mut information = PROCESS_INFORMATION::default();
+        // `lpApplicationName` is a const parameter in windows-rs 0.62
+        // (`Param<PCWSTR>`; `Option<&PCWSTR>` is the optional form); the
+        // command line stays the mutable `PWSTR`.
+        let app_pointer = application_name.map(|wide| PCWSTR(wide.as_ptr()));
 
         // Creation flags: EXTENDED_STARTUPINFO_PRESENT only. No
         // CREATE_SUSPENDED exists in this path — the crash-window shape the
         // spike evaluates away.
-        // SAFETY: wide command line outlives the call; the startup struct
+        // SAFETY: wide buffers outlive the call; the startup struct
         // is `STARTUPINFOEXW` cast to the documented `STARTUPINFOW` base
         // (`cb` announces the extended size); handles are adopted below.
         unsafe {
             CreateProcessW(
-                None,
-                Some(PWSTR(wide.as_mut_ptr())),
+                app_pointer.as_ref(),
+                Some(PWSTR(command_line.as_mut_ptr())),
                 None,
                 None,
                 false,
@@ -624,8 +679,12 @@ impl ManagedChild {
         };
         // The creation-time proof: the child's own handle reports the job.
         // If the attribute were dropped by the OS this fails loudly and the
-        // caller knows the launch was never managed.
-        child.in_job(job)?;
+        // caller knows the launch was never managed — with the explicit
+        // MembershipUnverified outcome (the child may exist unmanaged), not
+        // a silently swallowed fact.
+        if !child.in_job(job)? {
+            return Err(JobError::MembershipUnverified);
+        }
         Ok(child)
     }
 
@@ -692,6 +751,28 @@ impl AdvisoryJob {
     fn handle_raw_as_ptr(&self) -> *const std::ffi::c_void {
         (&raw const self.handle).cast()
     }
+}
+
+/// The exact child command line [`ManagedChild::spawn_exact`] builds:
+/// the image path (quoted when it contains whitespace) followed by the
+/// arguments verbatim. Exposed so the consent flow can display the command
+/// line it is about to consent to, byte-identical to the one executed.
+#[must_use]
+pub fn exact_command_line(application_name: &std::ffi::OsStr, arguments: &str) -> String {
+    let path_text = application_name.to_string_lossy();
+    let mut command_line = String::with_capacity(path_text.len() + arguments.len() + 4);
+    if path_text.contains(' ') || path_text.contains('\t') {
+        command_line.push('"');
+        command_line.push_str(&path_text);
+        command_line.push('"');
+    } else {
+        command_line.push_str(&path_text);
+    }
+    if !arguments.is_empty() {
+        command_line.push(' ');
+        command_line.push_str(arguments);
+    }
+    command_line
 }
 
 /// `PROCESS_SET_QUOTA` is the assignment right `AssignProcessToJobObject`
@@ -1132,7 +1213,7 @@ mod tests {
         // members so the process threshold is nonzero (zero = not
         // evaluated), and a CPU threshold below the observed accumulation
         // (polled first so the observed time is nonzero).
-        let mut managed2 = ManagedChild::spawn(&job, "ping -n 3 127.0.0.1").expect("second member");
+        let managed2 = ManagedChild::spawn(&job, "ping -n 3 127.0.0.1").expect("second member");
         let deadline = Instant::now() + Duration::from_secs(10);
         let accounting = loop {
             let current = job.accounting().expect("accounting");

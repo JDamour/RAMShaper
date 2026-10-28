@@ -1,0 +1,39 @@
+Managed launch request
+  command line : C:/Windows/System32/ping.exe -n 25 127.0.0.1
+  job          : fresh advisory job (zero limits, queried)
+  preflight    : no compatibility notes
+  semantics    : the job is not a sandbox: it provides no security isolation and enforces nothing
+  semantics    : membership is not detachable and lasts for the process lifetime
+  semantics    : removing monitoring does not detach the process or stop the application
+  semantics    : no kill-on-close, hard, time or process-count limits exist on this job
+type LAUNCH (exactly, alone) to consent to this one launch; anything else declines: launched pid 25504: C:/Windows/System32/ping.exe -n 25 127.0.0.1
+removing monitoring after 1500 ms (the application keeps running)
+monitoring pid 25504 every 1000 ms; Ctrl+C removes monitoring (the application keeps running)
+sample    1  pid 25504  active 1  cpu 0.000 s  flags 0
+
+Pinging 127.0.0.1 with 32 bytes of data:
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+sample    2  pid 25504  active 1  cpu 0.062 s  flags 0
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+
+monitoring removed for pid 25504 (launched C:/Windows/System32/ping.exe -n 25 127.0.0.1)
+  final accounting: active 1, total processes 1, cpu 0.062 s, page faults 1446
+  final limit flags: 0
+  semantics: the job is not a sandbox: it provides no security isolation and enforces nothing
+  semantics: membership is not detachable and lasts for the process lifetime
+  semantics: removing monitoring does not detach the process or stop the application
+  semantics: no kill-on-close, hard, time or process-count limits exist on this job
+the application keeps running; monitoring was removed, nothing was detached or stopped
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+ linger):
+INFO: No tasks are running which match the specified criteria.
+SUCCESS: The process with PID 25504 has been terminated.

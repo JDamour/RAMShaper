@@ -1,0 +1,17 @@
+{"event":"launched","limit_flags":0,"pid":9524,"preflight_notes":[],"request":{"arguments":"-n 6 127.0.0.1","command_line":"C:/Windows/System32/ping.exe -n 6 127.0.0.1","executable":"C:/Windows/System32/ping.exe"},"schema":"ramshaper.launch.v1"}
+{"active_processes":1,"advisory_exceeded":[],"limit_flags":0,"pid":9524,"schema":"ramshaper.launch-sample.v1","sequence":1,"total_cpu_time_100ns":0}
+
+Pinging 127.0.0.1 with 32 bytes of data:
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+{"active_processes":1,"advisory_exceeded":[],"limit_flags":0,"pid":9524,"schema":"ramshaper.launch-sample.v1","sequence":2,"total_cpu_time_100ns":468750}
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+{"event":"monitoring_removed","final_accounting":{"active_processes":1,"terminated_processes":0,"total_cpu_time_100ns":468750,"total_page_faults":1446,"total_processes":1},"final_limit_flags":0,"pid":9524,"preflight_notes":[],"request":{"arguments":"-n 6 127.0.0.1","command_line":"C:/Windows/System32/ping.exe -n 6 127.0.0.1","executable":"C:/Windows/System32/ping.exe"},"samples":2,"schema":"ramshaper.launch.v1","statements":["the job is not a sandbox: it provides no security isolation and enforces nothing","membership is not detachable and lasts for the process lifetime","removing monitoring does not detach the process or stop the application","no kill-on-close, hard, time or process-count limits exist on this job"]}
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+Reply from 127.0.0.1: bytes=32 time<1ms TTL=128
+
+Ping statistics for 127.0.0.1:
+    Packets: Sent = 6, Received = 6, Lost = 0 (0% loss),
+Approximate round trip times in milli-seconds:
+    Minimum = 0ms, Maximum = 0ms, Average = 0ms

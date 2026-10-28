@@ -32,6 +32,7 @@ pub mod fs;
 pub mod handle;
 pub mod identity;
 pub mod job;
+pub mod launch;
 pub mod memnotify;
 pub mod monitor;
 pub mod osinfo;
