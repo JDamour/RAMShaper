@@ -8,6 +8,7 @@ members = [
     "crates/ramshaper-cli",
     "crates/ramshaper-bench",
     "crates/ramshaper-subject",
+    "crates/ramshaper-trial",
     "crates/ramshaper-agent",
     "crates/ramshaper-ui",
 ]
@@ -22,6 +23,7 @@ publish = false
 ramshaper-core = { path = "crates/ramshaper-core" }
 ramshaper-journal = { path = "crates/ramshaper-journal" }
 ramshaper-bench = { path = "crates/ramshaper-bench" }
+ramshaper-subject = { path = "crates/ramshaper-subject" }
 ramshaper-platform = { path = "crates/ramshaper-platform" }
 ramshaper-windows = { path = "crates/ramshaper-windows" }
 ramshaper-agent = { path = "crates/ramshaper-agent" }

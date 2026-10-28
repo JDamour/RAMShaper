@@ -1,0 +1,1 @@
+{"events_per_run": 150, "warmup_events": 5, "task_iters": 100000, "seed": 42}

@@ -2833,3 +2833,43 @@ surface references it yet):
   / p95 1.11 ms. Gates: fmt/clippy clean; workspace **436/0** serially
   (+9 tests, incl. 5 over the real binary and the closed-schema
   refusal).
+
+---
+
+# ramshaper-trial — Stage B trial driver, 2026-10-28
+
+Design-memo follow-up ticket 3 (after the subject binary, ticket 2):
+
+- New crate `ramshaper-trial` (driver split lib + thin main): per treated
+  run — spawn the held subject, wait `SUBJECT_READY`, `PreviewAction`
+  (identity resolved fresh; FILETIME as the decimal-string wire form),
+  `ConfirmAction`, release `GO`, collect the run record, `RestoreAction`
+  while the subject still lives (`--exit-delay-ms`) so the journal reads
+  `Restored`. Baseline runs issue no wire calls. Seeded per-block order
+  coin (local SplitMix64), deterministic action ids (`trial-{run_id}`),
+  `analyze-ab`-compatible blocks output. **Fail-fast everywhere**: no
+  blocks file for a half-executed experiment; an abandoned held subject
+  exits 1 without running untreated.
+- **The gate decision under which this was tested (recorded honestly):**
+  the happy path is tested at the library boundary with a scripted
+  `AgentRpc` — the real wire gate honestly refuses previews without
+  fresh Elevated memory-pressure evidence (`pressure_not_elevated`),
+  this machine is not pressurized, and fabricating pressure during the
+  AT-06 soak is off-limits. The apply/restore mechanics behind the
+  scripted answers are proven live in the agent crate's own tests (which
+  inject the pressure level through the in-process gate API). The wire
+  REFUSAL path is tested live against a real gateless agent over a real
+  pipe.
+- **A real bug only the live run could catch:** the driver initially
+  passed the raw pipe name to `client_connect` while the agent
+  normalizes bare names on both of its sides — attempts 1/1b/1c of the
+  evidence file are the debugging trail (`OS error 2/3 from CreateFileW`
+  where the probe succeeded); fixed by mirroring the agent's
+  normalization, after which the typed refusal landed verbatim:
+  `Unsupported: this agent was started without the policy gate`, exit 1,
+  no blocks file, and the abandoned held subject's own honest line
+  (`stdin closed before the go signal; nothing ran`).
+- Gates: fmt/clippy clean; workspace **442 passed / 0 failed** serially
+  (+6 tests). Evidence: `docs/evidence/2026-10-28-ramshaper-trial/`.
+  Remaining for a real trial (unchanged): ADR-045, real Elevated
+  pressure evidence at trial time, and the owner's typed `ENABLE`.

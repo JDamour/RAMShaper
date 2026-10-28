@@ -130,11 +130,18 @@ is not consent; nothing is grantable over IPC). Machine-doable follow-up.
    `--allowlist-image` serve flag + the `OperatorDeclaredTrial` classification
    semantics + the subject image's placement outside self-identification.
 2. Subject binary — **DONE 2026-10-28** (`crates/ramshaper-subject`, built ahead of this ADR as inert capability; evidence `docs/evidence/2026-10-28-ramshaper-subject/`).
-3. Bench trial-orchestrator mode driving the policy IPC (machine-doable after
-   2).
+3. Trial orchestrator — **DONE 2026-10-28** (`crates/ramshaper-trial`, a standalone
+   driver rather than a bench mode — the bench crate was soak-locked; happy path
+   tested at the library boundary with a scripted RPC because the real gate honestly
+   demands Elevated memory-pressure evidence and fabricating pressure during the
+   AT-06 soak is off-limits; wire refusal path tested live against a real gateless
+   agent; evidence `docs/evidence/2026-10-28-ramshaper-trial/`).
 4. Agent serve flags (machine-doable after 1).
 5. Runbook doc + a rehearsal with the observe-only path (machine-doable;
    consent still owner-typed).
 
 What remains owner after all of the above: the ADR-045 pick, typing `ENABLE`,
-the declared workload parameters, and running the trial.
+the declared workload parameters, and running the trial. Machine-doable tickets
+2 and 3 were built ahead of the ADR as inert capability — nothing in the
+shipped surface references them; the ADR ratifies the operator-facing
+semantics.

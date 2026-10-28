@@ -1,0 +1,28 @@
+[package]
+name = "ramshaper-trial"
+description = "RAMShaper Stage B trial driver: orchestrates subject runs and consent-gated treatment via the agent's policy IPC"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "ramshaper-trial"
+path = "src/main.rs"
+
+[dependencies]
+ramshaper-bench = { workspace = true }
+ramshaper-core = { workspace = true }
+ramshaper-subject = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+ramshaper-windows = { workspace = true }
+
+[dev-dependencies]
+ramshaper-agent = { workspace = true }
+ramshaper-journal = { workspace = true }
+
+[lints]
+workspace = true

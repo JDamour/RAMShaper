@@ -1,14 +1,15 @@
 //! `ramshaper-subject` — the Stage B trial subject (RS-024 Stage B;
-//! design memo 2026-10-28, follow-up ticket 2).
+//! design memo 2026-10-28, follow-up ticket 2; hold-mode is ticket 3).
 //!
 //! A real consented trial needs a subject process that is separate from
 //! the driver: the bench process self-identifies as `protected_ramshaper`
 //! (ineligible by construction), and measuring inside the treated process
 //! is poor methodology. This binary is that subject: it runs the SAME
 //! bounded-CPU task-latency workload as `ramshaper-bench::workload`
-//! (spec fidelity by construction — it calls `run_workload` itself),
-//! measures its own per-task latencies, and emits one JSON run record on
-//! stdout for the orchestrator to aggregate.
+//! (spec fidelity by construction — it calls `run_workload` itself,
+//! through the [`ramshaper_subject`] library), measures its own per-task
+//! latencies, and emits one JSON run record on stdout for the orchestrator
+//! to aggregate.
 //!
 //! Safety shape: the subject is **inert**. It is always observe-only (the
 //! treatment closure is a no-op — in a real trial the agent applies the
@@ -17,37 +18,35 @@
 //! file writes beyond stdout, and its image name is deliberately NOT in
 //! the agent's self-identification list (it is a workload simulator, the
 //! *subject* of the experiment — the reasoning is recorded in the design
-//! memo and lands in ADR-045 when the owner picks it). Nothing in the
-//! shipped surface references this binary yet: it is built ahead of
-//! ADR-045 so the decision, once made, has working machinery behind it.
+//! memo and lands in ADR-045 when the owner picks it).
 //!
-//! The spec mirror: `ramshaper-bench`'s types carry no serde derives and
-//! the bench crate is frozen while the AT-06 soak holds its release
-//! binary, so this crate declares its own `SubjectSpec` with identical
-//! field names and the same doc-08 validation, then constructs the real
-//! `WorkloadSpec` from it. The orchestrator writes the same JSON for
-//! both.
+//! Trial sequencing (ticket 3): `--hold-until-go` makes the spawned
+//! subject announce `SUBJECT_READY` and wait for a `GO` line on stdin, so
+//! the driver can Preview/Confirm the priority change BEFORE the measured
+//! loop runs (a mid-run apply would straddle the latencies). EOF on
+//! stdin exits 1 — an orphaned held subject never hangs forever, and
+//! never runs untreated under a dead driver. `--exit-delay-ms` keeps the
+//! process alive after the record is printed so the driver's restore
+//! lands while the subject still runs (journal `Restored`, not
+//! `TargetGone`).
 
 #![deny(unsafe_code)]
 
-use std::io::Write as _;
+use std::io::{BufRead as _, Write as _};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::atomic::AtomicBool;
 
-use ramshaper_bench::workload::{run_workload, Completion, WorkloadSpec};
-use serde::Deserialize;
+use ramshaper_subject::{execute, load_spec, SubjectSpec, SUBJECT_GO_MARKER, SUBJECT_READY_MARKER};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const TOOL_NAME: &str = "ramshaper-subject";
-/// The run-record schema tag.
-pub const SUBJECT_RUN_SCHEMA: &str = "ramshaper.subject-run.v1";
 
 const HELP: &str = "\
 ramshaper-subject — Stage B trial subject (runs the declared workload, emits its own latencies)
 
 USAGE:
     ramshaper-subject --spec <SPEC.json> [--run-id <ID>]
+                      [--hold-until-go] [--exit-delay-ms <MS>]
 
     Runs one bounded-CPU workload run exactly as specified (the same
     workload and doc-08 minimums as ramshaper-bench workload-ab) and
@@ -65,69 +64,35 @@ OPTIONS:
                          minimums as ramshaper-bench's WorkloadSpec)
     --run-id <ID>        Run identifier echoed in the record (default:
                          \"subject\")
+    --hold-until-go      Print SUBJECT_READY and wait for a GO line on
+                         stdin before running (the trial driver applies
+                         the treatment between READY and GO); stdin EOF
+                         exits 1 without running
+    --exit-delay-ms <MS> Stay alive this long AFTER printing the record
+                         (default 0) so the driver's restore lands while
+                         the process still runs; range 0..=60000
     --version, -V        Print version
     --help, -h           Print this help
 
 EXIT CODES:
     0  the run completed its full schedule
-    1  the run stopped early (recorded in the JSON completion field)
+    1  the run stopped early, or a held subject saw stdin EOF before GO
     2  usage or spec error (nothing ran)
 ";
-
-/// The spec mirror of `ramshaper_bench::workload::WorkloadSpec` (identical
-/// field names and minimums; see the module docs for why it is mirrored).
-#[derive(Debug, Clone, PartialEq, serde::Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SubjectSpec {
-    /// Measured tasks per run (analyzed series length).
-    pub events_per_run: usize,
-    /// Warmup tasks before the measured series (excluded by design).
-    #[serde(default = "default_warmup")]
-    pub warmup_events: usize,
-    /// Per-task bounded compute effort: internal loop iterations.
-    #[serde(default = "default_task_iters")]
-    pub task_iters: u64,
-    /// Recorded seed (block-order randomization belongs to the
-    /// orchestrator; the subject echoes it for spec fidelity).
-    #[serde(default = "default_seed")]
-    pub seed: u64,
-}
-
-fn default_warmup() -> usize {
-    ramshaper_bench::workload::DEFAULT_WARMUP_EVENTS
-}
-
-fn default_task_iters() -> u64 {
-    200_000
-}
-
-fn default_seed() -> u64 {
-    0xAB1D_0C0F_EEBE_EF00
-}
-
-impl SubjectSpec {
-    /// Construct the real `WorkloadSpec` (the workload itself stays
-    /// bench-owned; the mirror only crosses the process boundary).
-    #[must_use]
-    pub fn to_workload_spec(&self) -> WorkloadSpec {
-        WorkloadSpec {
-            events_per_run: self.events_per_run,
-            warmup_events: self.warmup_events,
-            task_iters: self.task_iters,
-            seed: self.seed,
-        }
-    }
-}
 
 #[derive(Debug, PartialEq)]
 pub struct Parsed {
     pub spec_path: PathBuf,
     pub run_id: String,
+    pub hold_until_go: bool,
+    pub exit_delay_ms: u64,
 }
 
 pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, String> {
     let mut spec_path: Option<PathBuf> = None;
     let mut run_id = "subject".to_string();
+    let mut hold_until_go = false;
+    let mut exit_delay_ms = 0u64;
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -147,90 +112,39 @@ pub fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Parsed, Str
                 Some(value) => run_id = value,
                 None => return Err("--run-id requires a value".to_string()),
             },
+            "--hold-until-go" => hold_until_go = true,
+            "--exit-delay-ms" => match iter.next() {
+                Some(value) => match value.parse::<u64>() {
+                    Ok(ms) if ms <= 60_000 => exit_delay_ms = ms,
+                    Ok(ms) => return Err(format!("--exit-delay-ms {ms} out of range (0..=60000)")),
+                    Err(_) => return Err(format!("--exit-delay-ms expects a number, got {value}")),
+                },
+                None => return Err("--exit-delay-ms requires a value".to_string()),
+            },
             other => return Err(format!("unknown argument '{other}'")),
         }
     }
     let Some(spec_path) = spec_path else {
         return Err("missing --spec <SPEC.json>".to_string());
     };
-    Ok(Parsed { spec_path, run_id })
-}
-
-/// One measured latency, milliseconds. Missing values never occur on this
-/// path (`run_workload` records environmental gaps as completion status,
-/// not fabricated events) — mapped honestly anyway.
-#[derive(Debug, Clone, serde::Serialize)]
-#[serde(untagged)]
-pub enum Latency {
-    /// A measured task latency, milliseconds.
-    Measured(f64),
-    /// A missing value with its preserved reason (never silently dropped).
-    Missing {
-        /// Why the event is missing.
-        reason: String,
-    },
-}
-
-/// The emitted run record (one JSON object on stdout).
-#[derive(Debug, serde::Serialize)]
-pub struct SubjectRun {
-    /// Exact schema tag ([`SUBJECT_RUN_SCHEMA`]).
-    pub schema: &'static str,
-    /// Tool version.
-    pub version: &'static str,
-    /// The run identifier (echoed).
-    pub run_id: String,
-    /// The spec as executed.
-    pub spec: SubjectSpec,
-    /// The measured series (warmup excluded by design), milliseconds.
-    pub latencies_ms: Vec<Latency>,
-    /// How the run ended.
-    pub completion: serde_json::Value,
-}
-
-fn run(parsed: &Parsed) -> Result<SubjectRun, String> {
-    let text = std::fs::read_to_string(&parsed.spec_path)
-        .map_err(|error| format!("cannot read spec {}: {error}", parsed.spec_path.display()))?;
-    let spec: SubjectSpec = serde_json::from_str(&text).map_err(|error| {
-        format!(
-            "{} is not a valid subject spec: {error}",
-            parsed.spec_path.display()
-        )
-    })?;
-    // The doc-08 minimum lives in the bench validator (one authority).
-    spec.to_workload_spec()
-        .validate()
-        .map_err(|error| format!("invalid spec: {error}"))?;
-
-    let treatment = || {};
-    let stop = AtomicBool::new(false);
-    let executed = run_workload(&spec.to_workload_spec(), &parsed.run_id, &treatment, &stop);
-
-    let latencies_ms = executed
-        .events
-        .events
-        .into_iter()
-        .map(|value| match value {
-            ramshaper_bench::analysis::EventValue::Measured(ms) => Latency::Measured(ms),
-            ramshaper_bench::analysis::EventValue::Missing { reason } => {
-                Latency::Missing { reason }
-            }
-        })
-        .collect();
-    let completion = match executed.completion {
-        Completion::Complete => serde_json::json!({ "status": "complete" }),
-        Completion::StoppedEarly { executed } => {
-            serde_json::json!({ "status": "stopped_early", "executed": executed })
-        }
-    };
-    Ok(SubjectRun {
-        schema: SUBJECT_RUN_SCHEMA,
-        version: VERSION,
-        run_id: executed.events.run_id,
-        spec,
-        latencies_ms,
-        completion,
+    Ok(Parsed {
+        spec_path,
+        run_id,
+        hold_until_go,
+        exit_delay_ms,
     })
+}
+
+/// Wait for the driver's go signal. `true` = run; `false` = stdin closed
+/// before GO (an orphaned subject must not hang, and must not run
+/// untreated under a driver that died — the driver would have to redo
+/// the whole run).
+fn wait_for_go() -> bool {
+    let mut line = String::new();
+    match std::io::stdin().lock().read_line(&mut line) {
+        Ok(0) | Err(_) => false,
+        Ok(_) => line.trim() == SUBJECT_GO_MARKER,
+    }
 }
 
 fn main() -> ExitCode {
@@ -243,27 +157,44 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    match run(&parsed) {
-        Ok(record) => {
-            match serde_json::to_string_pretty(&record) {
-                Ok(out) => println!("{out}"),
-                Err(error) => {
-                    eprintln!("error: failed to serialize the run record: {error}");
-                    return ExitCode::from(1);
-                }
-            }
-            let _ = std::io::stdout().flush();
-            // The exit code mirrors the completion status (doc 08: early
-            // stops are recorded separately, never hidden).
-            match record.completion.get("status").and_then(|s| s.as_str()) {
-                Some("complete") => ExitCode::SUCCESS,
-                _ => ExitCode::from(1),
-            }
-        }
+    let spec: SubjectSpec = match load_spec(&parsed.spec_path) {
+        Ok(spec) => spec,
         Err(message) => {
             eprintln!("error: {message}");
-            ExitCode::from(2)
+            return ExitCode::from(2);
         }
+    };
+    if let Err(message) = spec.validate() {
+        eprintln!("error: invalid spec: {message}");
+        return ExitCode::from(2);
+    }
+
+    if parsed.hold_until_go {
+        println!("{SUBJECT_READY_MARKER}");
+        let _ = std::io::stdout().flush();
+        if !wait_for_go() {
+            eprintln!("error: stdin closed before the go signal; nothing ran");
+            return ExitCode::from(1);
+        }
+    }
+
+    let record = execute(&spec, &parsed.run_id);
+    match serde_json::to_string_pretty(&record) {
+        Ok(out) => println!("{out}"),
+        Err(error) => {
+            eprintln!("error: failed to serialize the run record: {error}");
+            return ExitCode::from(1);
+        }
+    }
+    let _ = std::io::stdout().flush();
+    if parsed.exit_delay_ms > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(parsed.exit_delay_ms));
+    }
+    // The exit code mirrors the completion status (doc 08: early stops
+    // are recorded separately, never hidden).
+    match record.completion.get("status").and_then(|s| s.as_str()) {
+        Some("complete") => ExitCode::SUCCESS,
+        _ => ExitCode::from(1),
     }
 }
 
@@ -272,73 +203,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn spec_mirror_matches_bench_defaults_and_minimums() {
-        let spec = SubjectSpec {
-            events_per_run: 100,
-            warmup_events: 10,
-            task_iters: 1,
-            seed: 1,
-        };
-        let workload = spec.to_workload_spec();
-        assert_eq!(workload.events_per_run, 100);
-        assert_eq!(workload.warmup_events, 10);
-        // The doc-08 minimum (>= 100 events) is enforced by the bench
-        // validator — the mirror delegates to it, never re-implements it.
-        assert!(workload.validate().is_ok());
-        let small = SubjectSpec {
-            events_per_run: 50,
-            ..spec
-        };
-        assert!(small.to_workload_spec().validate().is_err());
-    }
-
-    #[test]
-    fn spec_parse_is_closed_schema_with_defaults() {
-        let spec: SubjectSpec =
-            serde_json::from_str(r#"{"events_per_run": 250, "task_iters": 1000}"#)
-                .expect("parses with defaults");
-        assert_eq!(
-            spec.warmup_events,
-            ramshaper_bench::workload::DEFAULT_WARMUP_EVENTS
-        );
-        assert_eq!(spec.seed, 0xAB1D_0C0F_EEBE_EF00);
-        assert!(
-            serde_json::from_str::<SubjectSpec>(r#"{"events_per_run": 250, "bogus": true}"#)
-                .is_err(),
-            "unknown fields are refused"
-        );
-    }
-
-    #[test]
     fn parse_args_rules() {
         assert!(parse_args(vec![]).is_err(), "missing --spec is an error");
         assert!(parse_args(vec!["--spec".to_string()]).is_err());
         assert!(parse_args(vec!["bogus".to_string()]).is_err());
-        let parsed = parse_args(vec!["--spec".to_string(), "s.json".to_string()]).expect("parses");
-        assert_eq!(parsed.spec_path, PathBuf::from("s.json"));
-        assert_eq!(parsed.run_id, "subject");
-        let named = parse_args(vec![
+        assert!(parse_args(vec!["--exit-delay-ms".to_string()]).is_err());
+        assert!(parse_args(vec!["--exit-delay-ms".to_string(), "60001".to_string()]).is_err());
+        let parsed = parse_args(vec![
             "--spec".to_string(),
             "s.json".to_string(),
-            "--run-id".to_string(),
-            "block3-B".to_string(),
+            "--hold-until-go".to_string(),
+            "--exit-delay-ms".to_string(),
+            "800".to_string(),
         ])
         .expect("parses");
-        assert_eq!(named.run_id, "block3-B");
-    }
-
-    #[test]
-    fn a_full_run_record_carries_the_series_and_completion() {
-        let spec = SubjectSpec {
-            events_per_run: 120,
-            warmup_events: 2,
-            task_iters: 1,
-            seed: 7,
-        };
-        let treatment = || {};
-        let stop = AtomicBool::new(false);
-        let executed = run_workload(&spec.to_workload_spec(), "t1", &treatment, &stop);
-        assert_eq!(executed.completion, Completion::Complete);
-        assert_eq!(executed.events.events.len(), 120, "warmup excluded");
+        assert!(parsed.hold_until_go);
+        assert_eq!(parsed.exit_delay_ms, 800);
+        assert_eq!(parsed.run_id, "subject");
     }
 }

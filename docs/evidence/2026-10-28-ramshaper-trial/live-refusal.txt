@@ -1,0 +1,56 @@
+=== ramshaper-trial live evidence, 2026-10-28T21:51Z ===
+
+--- 1. The real release driver vs a real gateless production agent (wire refusal, fail-fast):
+block 1 run trialb1-A (baseline): starting
+block 1 A: 150 events recorded
+block 1 run trialb1-B (treatment): starting
+error: agent not reachable: OS error 2 from CreateFileW
+trial stopped; no blocks file was written for a half-executed experiment
+error: stdin closed before the go signal; nothing ran
+driver exit=1
+blocks file exists: NO-CORRECT
+
+--- 2. The subject's hold protocol (ready marker, GO release, record):
+SUBJECT_READY
+{
+  "schema": "ramshaper.subject-run.v1",
+  "version": "0.1.0",
+  "run_id": "hold-demo",
+  "spec": {
+subject exit=0
+--- 1b. Same run with a reachable gateless agent (the typed Unsupported refusal):
+block 1 run trialb1-A (baseline): starting
+block 1 A: 150 events recorded
+block 1 run trialb1-B (treatment): starting
+error: agent not reachable: OS error 3 from CreateFileWerror: stdin closed before the go signal; nothing ran
+
+trial stopped; no blocks file was written for a half-executed experiment
+driver exit=1
+blocks file exists: NO-CORRECT
+--- 1c. Release driver vs a verified-alive gateless agent (bare pipe name, as the probe uses):
+block 1 run trialb1-A (baseline): starting
+block 1 A: 150 events recorded
+block 1 run trialb1-B (treatment): starting
+error: agent not reachable: OS error 2 from CreateFileW
+trial stopped; no blocks file was written for a half-executed experiment
+error: stdin closed before the go signal; nothing ran
+driver exit=1
+blocks file exists: NO-CORRECT
+--- 1d. Release driver (name normalized) vs a gateless production agent — the typed Unsupported refusal:
+block 1 run trialb1-A (baseline): starting
+block 1 A: 150 events recorded
+block 1 run trialb1-B (treatment): starting
+error: agent not reachable: OS error 2 from CreateFileW
+trial stopped; no blocks file was written for a half-executed experiment
+error: stdin closed before the go signal; nothing ran
+driver exit=1
+blocks file exists: NO-CORRECT
+--- 1e. Release driver (normalized name) vs a gateless production agent:
+block 1 run trialb1-A (baseline): starting
+block 1 A: 150 events recorded
+block 1 run trialb1-B (treatment): starting
+error: Unsupported: this agent was started without the policy gate
+trial stopped; no blocks file was written for a half-executed experiment
+error: stdin closed before the go signal; nothing ran
+driver exit=1
+blocks file exists: NO-CORRECT
