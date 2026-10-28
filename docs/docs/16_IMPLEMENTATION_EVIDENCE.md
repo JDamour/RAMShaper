@@ -2367,8 +2367,9 @@ run recorded 2 failures in the sibling session's UNCOMMITTED in-flight
 recorded, not touched); every other crate green.
 
 **Not in this slice:** user-supplied trace files (a `--trace <file>`
-schema over `TargetObservation` — a future extension); the managed-
-launch `restore` command family (G4).
+schema over `TargetObservation` — a future extension; **shipped
+2026-10-28**, see the RS-019 addendum below); the managed-launch
+`restore` command family (G4).
 
 ---
 
@@ -2667,3 +2668,45 @@ the RS-022 note; the one parallel-run failure was the recorded transient
 `CreateProcessW` code-5 under spawn load, green on the serial rerun).
 New tests: launch module 10 (2 live) + CLI parser 6. Evidence:
 `docs/evidence/2026-10-28-rs023-launch-consent/`. ADR-044.
+
+---
+
+# RS-019 addendum — `policies --dry-run --trace <FILE>`, 2026-10-28
+
+The user-supplied trace extension recorded as future work in the RS-019
+0.3.43 slice:
+
+- `ramshaper-core::policy` gained the **closed JSON file schema**
+  `ramshaper.policy-trace.v1` (`ParsedTrace::parse`): a target identity
+  (pid + exact creation FILETIME), an optional assumed allowlist
+  (default `SYNTHETIC-APP.EXE` — a walk input, never evidence), and
+  ordered steps. Unknown fields are refused; serde errors carry file
+  line/column; a wrong schema tag or an empty step list is a named
+  error.
+- The step schema mirrors `TraceStep` with owned strings and
+  `TraceStep::new`'s defaults: absent `target` observations are
+  all-pass, the four step flags default false, the journal defaults
+  available, and `low_memory` absent-or-null means missing/stale inputs
+  (pressure Unknown). The eligibility vocabulary deserializes as
+  snake_case variants; `ProtectedCategory` parses from its stable
+  machine codes (`protected_audio`, … — the inverse of its existing
+  custom `Serialize`, so audit strings round-trip).
+- `identity_check` uses file vocabulary: `matches`, `{mismatch: {pid,
+  creation_filetime}}` (fabricates the observed instance from the
+  author's stated facts) and `{unreachable: {win32_code}}` (modeled as
+  the exited-target query failure). Honest-by-statement, not guessed.
+- CLI: `policies --dry-run [--json] [--trace <FILE>]`. The demo path is
+  byte-identical to 0.3.43 (the walk + rendering were factored into one
+  `print_log`); the file path prints the same SYNTHETIC-marked walk with
+  the source path named. Read/parse failures exit 2 (configuration-error
+  class).
+
+**Tests:** core +6 (parse/defaults, full preview→apply→disable walk,
+refusals [unknown field / wrong schema / empty steps], null-pressure,
+ineligible deny codes incl. the check-level `protected_category` code,
+unreachable mapping, the ProtectedCategory code round-trip), CLI +2.
+Semantics surfaced while writing the walk test (pinned, not assumed):
+pressure elevates on the third consecutive elevated sample; a pending
+preview is re-offered; stale pressure does NOT resolve an active
+experiment. Workspace **425 passed / 0 failed** serially; fmt/clippy
+clean. Evidence: `docs/evidence/2026-10-28-policies-trace/`.

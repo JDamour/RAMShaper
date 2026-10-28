@@ -1,0 +1,12 @@
+{
+  "schema": "ramshaper.policy-trace.v1",
+  "target": {"pid": 4242, "creation_filetime": 133000000000000000},
+  "allowlist": ["leafapp.exe"],
+  "steps": [
+    {"monotonic_ms": 0,    "low_memory": true, "image_name": "leafapp.exe"},
+    {"monotonic_ms": 1000, "low_memory": true, "image_name": "leafapp.exe"},
+    {"monotonic_ms": 2000, "low_memory": true, "image_name": "leafapp.exe"},
+    {"monotonic_ms": 3000, "low_memory": true, "image_name": "leafapp.exe", "confirm": true},
+    {"monotonic_ms": 4000, "low_memory": true, "image_name": "leafapp.exe", "external_priority_change": true}
+  ]
+}

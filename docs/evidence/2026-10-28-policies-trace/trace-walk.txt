@@ -1,0 +1,8 @@
+policies --dry-run --trace C:\Users\jmpat\AppData\Local\Temp\trace-demo.json: SYNTHETIC trace — no OS reads, no OS writes
+schema ramshaper.policy-dryrun.v1 (rules policy_v1, pressure pressure_v1)
+[ 0]       0 ms  unknown    no_action pressure_unknown
+[ 1]    1000 ms  unknown    no_action pressure_unknown
+[ 2]    2000 ms  elevated   preview dry-1 (ttl 120000 ms; confirmation required)
+[ 3]    3000 ms  elevated   apply dry-1 (simulated; deadline 123000 ms)
+[ 4]    4000 ms  elevated   resolved dry-1 (external_conflict -> Conflict)
+summary: 1 previews offered, 1 applies simulated, 1 resolved, 0 replays ignored, 2 no-action steps

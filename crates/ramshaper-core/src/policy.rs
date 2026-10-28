@@ -177,6 +177,259 @@ impl<'a> TraceStep<'a> {
     }
 }
 
+/// The `policies --dry-run --trace` file schema tag
+/// (`ramshaper.policy-trace.v1`).
+pub const TRACE_FILE_SCHEMA: &str = "ramshaper.policy-trace.v1";
+
+/// Why a trace file was refused. Every variant names the rule.
+#[derive(Debug, thiserror::Error)]
+pub enum TraceFileError {
+    /// JSON parse or schema violation (unknown field, wrong type) — the
+    /// serde error carries the file line/column.
+    #[error("trace file is not a valid ramshaper.policy-trace: {0}")]
+    Parse(#[from] serde_json::Error),
+    /// The `schema` tag is present but not the expected one.
+    #[error("trace file schema must be \"{TRACE_FILE_SCHEMA}\", found \"{found}\"")]
+    SchemaMismatch {
+        /// The schema tag the file actually carried.
+        found: String,
+    },
+    /// A trace with no steps has nothing to decide.
+    #[error("a trace needs at least one step")]
+    EmptySteps,
+}
+
+/// One trace file (the `--trace` input schema): the candidate identity the
+/// steps describe, the compatibility allowlist the walk assumes, and the
+/// ordered steps. **Closed schema** — unknown fields are refused. A trace
+/// is a what-if decision walk over user-authored observations: it performs
+/// no OS reads or writes and is never evidence (output stays SYNTHETIC-
+/// marked).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TraceFile {
+    /// Exact schema tag ([`TRACE_FILE_SCHEMA`]).
+    pub schema: String,
+    /// The candidate identity the whole trace describes.
+    pub target: TraceTarget,
+    /// Tested compatibility allowlist (bare image names) the walk assumes.
+    /// Defaults to the demo's synthetic image: nothing here is tested
+    /// evidence, and the allowlist is a walk input, not authority.
+    #[serde(default = "default_trace_allowlist")]
+    pub allowlist: Vec<String>,
+    /// Ordered steps (at least one).
+    pub steps: Vec<TraceStepDoc>,
+}
+
+fn default_trace_allowlist() -> Vec<String> {
+    vec!["SYNTHETIC-APP.EXE".to_string()]
+}
+
+/// The candidate identity a trace describes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TraceTarget {
+    /// PID the trace's steps observe.
+    pub pid: u32,
+    /// Exact creation FILETIME of that PID's instance.
+    pub creation_filetime: u64,
+}
+
+/// The identity re-check outcome at one step, in file vocabulary. The real
+/// [`IdentityVerification`] payloads are fabricated from the file's stated
+/// facts (a mismatch carries the observed instance; unreachable maps to
+/// the exited-target query failure with the author's Win32 code).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraceIdentityCheck {
+    /// Identity matches.
+    Matches,
+    /// The PID now belongs to a different instance.
+    Mismatch {
+        /// The PID observed.
+        pid: u32,
+        /// That instance's creation FILETIME.
+        creation_filetime: u64,
+    },
+    /// The identity could not be re-queried (modeled as an exited target).
+    Unreachable {
+        /// The Win32 code the author models.
+        win32_code: u32,
+    },
+}
+
+impl TraceIdentityCheck {
+    fn to_verification(&self) -> IdentityVerification {
+        match self {
+            Self::Matches => IdentityVerification::Matches,
+            Self::Mismatch {
+                pid,
+                creation_filetime,
+            } => IdentityVerification::Mismatch {
+                observed: ProcessIdentity::new(*pid, *creation_filetime),
+            },
+            Self::Unreachable { win32_code } => IdentityVerification::Unreachable {
+                reason: crate::snapshot::QueryFailure::Exited { code: *win32_code },
+            },
+        }
+    }
+}
+
+/// One step of a trace file — the file form of [`TraceStep`] with owned
+/// strings and per-step defaults matching [`TraceStep::new`]: absent
+/// `target` observations are all-pass, the four step flags default to
+/// false, the journal defaults to available. `low_memory` is REQUIRED
+/// (absent-vs-`null` is the pressure-Unknown distinction, so the author
+/// must state it).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TraceStepDoc {
+    /// Monotonic time of this step (ms).
+    pub monotonic_ms: u64,
+    /// Low-memory signal: `true`/`false` are valid observations; `null` or
+    /// an absent field = missing/stale inputs (pressure Unknown).
+    pub low_memory: Option<bool>,
+    /// Target image name (compatibility label only).
+    pub image_name: String,
+    /// Target observations; absent = all-pass.
+    #[serde(default)]
+    pub target: Option<TargetObservationDoc>,
+    /// Manual confirmation of a pending preview.
+    #[serde(default)]
+    pub confirm: bool,
+    /// Manual disable.
+    #[serde(default)]
+    pub disable: bool,
+    /// External priority change on an active experiment.
+    #[serde(default)]
+    pub external_priority_change: bool,
+    /// Configuration invalidation.
+    #[serde(default)]
+    pub config_invalidated: bool,
+    /// Journal availability (defaults to available).
+    #[serde(default = "default_true")]
+    pub journal_available: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// The file form of [`TargetObservation`] (the vocabulary deserializes as
+/// snake_case variants; `ProtectedCategory` as its stable machine code).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetObservationDoc {
+    /// Fresh identity re-check.
+    pub identity_check: TraceIdentityCheck,
+    /// Owner/session observation.
+    pub owner_session: OwnerSessionObservation,
+    /// Foreground observation.
+    pub focus: FocusObservation,
+    /// Safety classification.
+    pub classification: SafetyClassification,
+    /// Current priority class.
+    pub priority_class: PriorityClassObservation,
+    /// Live-children observation.
+    pub children: ChildObservation,
+    /// Priority API capability.
+    pub capability: PriorityCapability,
+}
+
+impl Default for TargetObservationDoc {
+    fn default() -> Self {
+        Self {
+            identity_check: TraceIdentityCheck::Matches,
+            owner_session: OwnerSessionObservation::CurrentUserSession,
+            focus: FocusObservation::Observed {
+                target_foreground: false,
+                observed_age_ms: 100,
+            },
+            classification: SafetyClassification::VerifiedNonCritical,
+            priority_class: PriorityClassObservation::Normal,
+            children: ChildObservation::Observed { live_children: 0 },
+            capability: PriorityCapability::Supported,
+        }
+    }
+}
+
+impl TargetObservationDoc {
+    fn to_observation(&self) -> TargetObservation {
+        TargetObservation {
+            identity_check: self.identity_check.to_verification(),
+            owner_session: self.owner_session.clone(),
+            focus: self.focus.clone(),
+            classification: self.classification.clone(),
+            priority_class: self.priority_class.clone(),
+            children: self.children.clone(),
+            capability: self.capability.clone(),
+        }
+    }
+}
+
+impl TraceStepDoc {
+    fn to_step(&self) -> TraceStep<'_> {
+        TraceStep {
+            monotonic_ms: self.monotonic_ms,
+            low_memory: self.low_memory,
+            image_name: &self.image_name,
+            target: self
+                .target
+                .clone()
+                .map_or_else(TargetObservation::all_pass, |doc| doc.to_observation()),
+            confirm: self.confirm,
+            disable: self.disable,
+            external_priority_change: self.external_priority_change,
+            config_invalidated: self.config_invalidated,
+            journal_available: self.journal_available,
+        }
+    }
+}
+
+/// A parsed trace file, ready to walk. The borrowed steps live in the
+/// parsed document.
+#[derive(Debug, Clone)]
+pub struct ParsedTrace {
+    file: TraceFile,
+}
+
+impl ParsedTrace {
+    /// Parse and structurally validate a trace file: exact schema tag,
+    /// at least one step.
+    ///
+    /// # Errors
+    /// [`TraceFileError`] naming the violated rule (serde errors carry the
+    /// file line/column, including unknown-field refusals).
+    pub fn parse(text: &str) -> Result<Self, TraceFileError> {
+        let file: TraceFile = serde_json::from_str(text)?;
+        if file.schema != TRACE_FILE_SCHEMA {
+            return Err(TraceFileError::SchemaMismatch { found: file.schema });
+        }
+        if file.steps.is_empty() {
+            return Err(TraceFileError::EmptySteps);
+        }
+        Ok(Self { file })
+    }
+
+    /// The candidate identity the trace describes.
+    #[must_use]
+    pub fn target_identity(&self) -> ProcessIdentity {
+        ProcessIdentity::new(self.file.target.pid, self.file.target.creation_filetime)
+    }
+
+    /// The allowlist names the walk assumes (a walk input, never evidence).
+    #[must_use]
+    pub fn allowlist_names(&self) -> &[String] {
+        &self.file.allowlist
+    }
+
+    /// The steps, borrowed for the walk.
+    #[must_use]
+    pub fn steps(&self) -> Vec<TraceStep<'_>> {
+        self.file.steps.iter().map(|step| step.to_step()).collect()
+    }
+}
+
 /// Environment the trace runs against.
 pub struct DryRunConfig<'a> {
     /// Experiment rules.
@@ -1358,6 +1611,240 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&log).expect("serialize"),
             serde_json::to_string(&again).expect("serialize")
+        );
+    }
+
+    // ---- the `policies --dry-run --trace` file schema (user-authored walks) ----
+
+    const MINIMAL_TRACE: &str = r#"{
+        "schema": "ramshaper.policy-trace.v1",
+        "target": {"pid": 4242, "creation_filetime": 133000000000000000},
+        "steps": [
+            {"monotonic_ms": 0,    "low_memory": true, "image_name": "leafapp.exe"},
+            {"monotonic_ms": 1000, "low_memory": true, "image_name": "leafapp.exe"},
+            {"monotonic_ms": 2000, "low_memory": true, "image_name": "leafapp.exe"},
+            {"monotonic_ms": 3000, "low_memory": true, "image_name": "leafapp.exe", "confirm": true},
+            {"monotonic_ms": 4000, "low_memory": true, "image_name": "leafapp.exe", "disable": true}
+        ]
+    }"#;
+
+    fn walk_file(text: &str) -> DryRunLog {
+        let parsed = ParsedTrace::parse(text).expect("valid trace file");
+        let rules = PolicyRules::default_experiment();
+        let allowlist = Allowlist::new(rules.rules_version.as_str(), &["leafapp.exe"]);
+        let identity = parsed.target_identity();
+        let config = DryRunConfig {
+            rules: &rules,
+            allowlist: &allowlist,
+            user_exclusions: &[],
+            target_identity: &identity,
+        };
+        let steps = parsed.steps();
+        dry_run(&config, &steps)
+    }
+
+    #[test]
+    fn trace_file_walks_preview_apply_and_resolve() {
+        let log = walk_file(MINIMAL_TRACE);
+        // Pressure needs three consecutive elevated samples, so the preview
+        // lands on the third step; the fourth confirms (apply simulated);
+        // the fifth disables (an active experiment resolves, recovery is
+        // never blocked).
+        assert_eq!(log.summary.previews_offered, 1, "{log:?}");
+        assert_eq!(log.summary.applies_simulated, 1);
+        assert_eq!(log.summary.actions_resolved, 1);
+    }
+
+    #[test]
+    fn trace_file_parses_target_identity_and_default_allowlist() {
+        let parsed = ParsedTrace::parse(MINIMAL_TRACE).expect("valid");
+        assert_eq!(
+            parsed.target_identity(),
+            ProcessIdentity::new(4242, 133_000_000_000_000_000)
+        );
+        assert_eq!(
+            parsed.allowlist_names(),
+            &["SYNTHETIC-APP.EXE".to_string()],
+            "the default allowlist is the synthetic image, never evidence"
+        );
+        assert_eq!(parsed.steps().len(), 5);
+    }
+
+    #[test]
+    fn trace_file_refuses_unknown_fields_wrong_schema_and_empty_steps() {
+        let unknown_field = r#"{"schema": "ramshaper.policy-trace.v1",
+            "target": {"pid": 1, "creation_filetime": 2},
+            "extra": true,
+            "steps": [{"monotonic_ms": 0, "low_memory": null, "image_name": "x"}]}"#;
+        assert!(matches!(
+            ParsedTrace::parse(unknown_field),
+            Err(TraceFileError::Parse(_))
+        ));
+        let wrong_schema = MINIMAL_TRACE.replace("policy-trace", "policy-what");
+        assert!(matches!(
+            ParsedTrace::parse(&wrong_schema),
+            Err(TraceFileError::SchemaMismatch { found })
+                if found == "ramshaper.policy-what.v1"
+        ));
+        let empty = r#"{"schema": "ramshaper.policy-trace.v1",
+            "target": {"pid": 1, "creation_filetime": 2}, "steps": []}"#;
+        assert!(matches!(
+            ParsedTrace::parse(empty),
+            Err(TraceFileError::EmptySteps)
+        ));
+        // An absent low_memory field is the null semantics (pressure
+        // Unknown) — parseable by design, asserted in the null test below.
+    }
+
+    #[test]
+    fn trace_file_null_low_memory_is_pressure_unknown() {
+        // A fresh null-only trace: the first step is pressure Unknown.
+        let null_only = r#"{
+            "schema": "ramshaper.policy-trace.v1",
+            "target": {"pid": 1, "creation_filetime": 2},
+            "steps": [{"monotonic_ms": 0, "low_memory": null, "image_name": "leafapp.exe"}]
+        }"#;
+        let log = walk_file(null_only);
+        assert!(matches!(
+            log.steps[0].decision,
+            PolicyDecision::NoAction {
+                reason: NoActionReason::PressureUnknown
+            }
+        ));
+    }
+
+    #[test]
+    fn trace_file_carries_ineligible_observations_as_deny_codes() {
+        let denied = r#"{
+            "schema": "ramshaper.policy-trace.v1",
+            "target": {"pid": 1, "creation_filetime": 2},
+            "steps": [
+                {"monotonic_ms": 0, "low_memory": true, "image_name": "leafapp.exe"},
+                {"monotonic_ms": 1000, "low_memory": true, "image_name": "leafapp.exe"},
+                {"monotonic_ms": 2000, "low_memory": true, "image_name": "leafapp.exe"},
+                {
+                    "monotonic_ms": 3000,
+                    "low_memory": true,
+                    "image_name": "leafapp.exe",
+                    "target": {
+                        "identity_check": {"mismatch": {"pid": 9, "creation_filetime": 99}},
+                        "owner_session": {"different": {"detail": "other session"}},
+                        "focus": {"observed": {"target_foreground": false, "observed_age_ms": 100}},
+                        "classification": {"protected": {"category": "protected_audio"}},
+                        "priority_class": "normal",
+                        "children": {"observed": {"live_children": 2}},
+                        "capability": "supported"
+                    }
+                }
+            ]
+        }"#;
+        let parsed = ParsedTrace::parse(denied).expect("valid");
+        let rules = PolicyRules::default_experiment();
+        let allowlist = Allowlist::new(rules.rules_version.as_str(), &["leafapp.exe"]);
+        let identity = parsed.target_identity();
+        let config = DryRunConfig {
+            rules: &rules,
+            allowlist: &allowlist,
+            user_exclusions: &[],
+            target_identity: &identity,
+        };
+        let log = dry_run(&config, &parsed.steps());
+        // Pressure elevates on the third sample; the fourth step carries the
+        // ineligible observations.
+        match &log.steps[3].decision {
+            PolicyDecision::NoAction {
+                reason: NoActionReason::Ineligible { denies },
+            } => {
+                let codes: Vec<&'static str> = denies.iter().map(|d| d.code()).collect();
+                assert!(codes.contains(&"identity_reused"), "{codes:?}");
+                assert!(codes.contains(&"owner_session_different"), "{codes:?}");
+                // The classification deny is check-level; the matched
+                // category (protected_audio) rides in the reason display.
+                assert!(codes.contains(&"protected_category"), "{codes:?}");
+                assert!(
+                    denies
+                        .iter()
+                        .any(|d| format!("{d}").contains("protected_audio")),
+                    "{denies:?}"
+                );
+                assert!(codes.contains(&"children_observed"), "{codes:?}");
+            }
+            other => panic!("expected Ineligible, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn trace_file_unreachable_identity_maps_to_the_exited_failure() {
+        let trace = r#"{
+            "schema": "ramshaper.policy-trace.v1",
+            "target": {"pid": 1, "creation_filetime": 2},
+            "steps": [
+                {"monotonic_ms": 0, "low_memory": true, "image_name": "leafapp.exe"},
+                {"monotonic_ms": 1000, "low_memory": true, "image_name": "leafapp.exe"},
+                {"monotonic_ms": 2000, "low_memory": true, "image_name": "leafapp.exe"},
+                {
+                    "monotonic_ms": 3000,
+                    "low_memory": true,
+                    "image_name": "leafapp.exe",
+                    "target": {
+                        "identity_check": {"unreachable": {"win32_code": 87}},
+                        "owner_session": "current_user_session",
+                        "focus": {"observed": {"target_foreground": false, "observed_age_ms": 100}},
+                        "classification": "verified_non_critical",
+                        "priority_class": "normal",
+                        "children": {"observed": {"live_children": 0}},
+                        "capability": "supported"
+                    }
+                }
+            ]
+        }"#;
+        let parsed = ParsedTrace::parse(trace).expect("valid");
+        let rules = PolicyRules::default_experiment();
+        let allowlist = Allowlist::new(rules.rules_version.as_str(), &["leafapp.exe"]);
+        let identity = parsed.target_identity();
+        let config = DryRunConfig {
+            rules: &rules,
+            allowlist: &allowlist,
+            user_exclusions: &[],
+            target_identity: &identity,
+        };
+        let log = dry_run(&config, &parsed.steps());
+        match &log.steps[3].decision {
+            PolicyDecision::NoAction {
+                reason: NoActionReason::Ineligible { denies },
+            } => {
+                assert!(
+                    denies.iter().any(|d| d.code() == "identity_unreachable"),
+                    "{denies:?}"
+                );
+            }
+            other => panic!("expected Ineligible, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn protected_category_round_trips_through_machine_codes() {
+        for code in [
+            "protected_audio",
+            "protected_security",
+            "protected_accessibility",
+            "protected_install_update",
+            "protected_game_anticheat",
+            "protected_ramshaper",
+            "protected_priority_manager",
+        ] {
+            let category = crate::eligibility::ProtectedCategory::from_code(code)
+                .unwrap_or_else(|| panic!("{code} must parse"));
+            assert_eq!(category.code(), code);
+            let json = serde_json::to_string(&category).expect("serialize");
+            assert_eq!(json, format!("\"{code}\""));
+            let back: crate::eligibility::ProtectedCategory =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, category);
+        }
+        assert!(
+            serde_json::from_str::<crate::eligibility::ProtectedCategory>("\"nonsense\"").is_err(),
+            "unknown codes are refused, never guessed"
         );
     }
 }

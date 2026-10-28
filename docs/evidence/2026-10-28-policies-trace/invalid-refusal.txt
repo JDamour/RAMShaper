@@ -1,0 +1,2 @@
+error: C:\Users\jmpat\AppData\Local\Temp\bad-trace.json is not a valid trace: trace file is not a valid ramshaper.policy-trace: missing field `target` at line 1 column 19
+exit=2

@@ -61,15 +61,19 @@ CONFIG USAGE:
     ramshaper-cli config import <SOURCE> --into <DEST>
 
 POLICIES USAGE:
-    ramshaper-cli policies --dry-run [--json]
+    ramshaper-cli policies --dry-run [--json] [--trace <FILE>]
 
-    Simulates the policy decision layer over a built-in SYNTHETIC trace:
-    no OS reads, no OS writes, no real process is touched. The trace walks
-    every decision (previews, applies, resolutions, refusals) with fixed
-    times; the same command always prints byte-identical output. A real
-    policy experiment requires the agent's typed console consent (the
-    `--policy-journal` flag on ramshaper-agent) and an allowlisted target
-    (none exist until RS-024 Stage B testing).
+    Simulates the policy decision layer over a SYNTHETIC trace: no OS
+    reads, no OS writes, no real process is touched. Without --trace the
+    built-in demo trace runs; the same command always prints byte-
+    identical output. With --trace, FILE (schema ramshaper.policy-trace.v1,
+    closed JSON) supplies the walk: a target identity, an assumed
+    allowlist (a walk input, never evidence) and ordered steps of
+    observations (low_memory true/false/null, per-step target facts,
+    confirm/disable/config/journal flags). Output stays SYNTHETIC-marked.
+    A real policy experiment requires the agent's typed console consent
+    (the `--policy-journal` flag on ramshaper-agent) and an allowlisted
+    target (none exist until RS-024 Stage B testing).
 
 LAUNCH USAGE:
     ramshaper-cli launch [--json] [--interval-ms <MS>] [--stop-after-ms <MS>]
@@ -117,6 +121,10 @@ OPTIONS:
     --into <DEST>        config import: destination file, replaced atomically
     --config <PATH>      Load a TOML configuration file (schema_version 1,
                          observe-only; invalid files exit 2)
+    --trace <FILE>       policies --dry-run: walk a user-authored
+                         ramshaper.policy-trace.v1 file instead of the
+                         built-in demo trace (still synthetic; invalid
+                         files exit 2)
     --version, -V        Print version
     --help, -h           Print this help
 
@@ -150,6 +158,10 @@ pub struct CliArgs {
     /// Raw `--dry-run` flag; valid only for `policies` (its only mode —
     /// the demo trace is synthetic by definition).
     dry_run: bool,
+    /// `--trace <FILE>`: a user-authored `ramshaper.policy-trace.v1` walk
+    /// instead of the built-in demo trace (still synthetic: no OS reads,
+    /// no OS writes).
+    trace: Option<PathBuf>,
     config_path: Option<PathBuf>,
 }
 
@@ -222,6 +234,7 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> ParseOutcome {
     let mut interval_ms: Option<u64> = None;
     let mut stop_after_ms: Option<u64> = None;
     let mut config_path: Option<PathBuf> = None;
+    let mut trace: Option<PathBuf> = None;
     let mut into: Option<PathBuf> = None;
     let mut advisory_active_seen = false;
     let mut advisory_cpu_seen = false;
@@ -238,6 +251,10 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> ParseOutcome {
             "--config" => match args.next() {
                 Some(value) => config_path = Some(PathBuf::from(value)),
                 None => return ParseOutcome::UsageError("--config requires a path".into()),
+            },
+            "--trace" => match args.next() {
+                Some(value) => trace = Some(PathBuf::from(value)),
+                None => return ParseOutcome::UsageError("--trace requires a path".into()),
             },
             "--advisory-max-active" => match args.next() {
                 Some(value) => match value.to_string_lossy().parse::<u32>() {
@@ -430,6 +447,9 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> ParseOutcome {
     if dry_run && command != Command::Policies {
         return ParseOutcome::UsageError("--dry-run is only valid for policies".into());
     }
+    if trace.is_some() && command != Command::Policies {
+        return ParseOutcome::UsageError("--trace is only valid for policies --dry-run".into());
+    }
     if command == Command::Policies && !dry_run {
         return ParseOutcome::UsageError(
             "policies requires --dry-run (the only supported mode)".into(),
@@ -498,6 +518,7 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> ParseOutcome {
         interval_ms,
         stop_after_ms,
         dry_run,
+        trace,
         config_path,
     })
 }
@@ -879,7 +900,7 @@ fn run(args: CliArgs) -> ExitCode {
             args.json,
             args.interval_ms.unwrap_or(DEFAULT_PROCESS_INTERVAL_MS),
         ),
-        Command::Policies => run_policies(args.json),
+        Command::Policies => run_policies(args.json, args.trace.as_ref()),
         Command::Launch(spec) => run_launch(
             &spec,
             args.json,
@@ -1061,8 +1082,60 @@ fn run_watch_command(json: bool, interval_ms: u64, stop_after_ms: Option<u64>) -
 /// no clock — the same trace always produces byte-identical output. The
 /// allowlist carries only the trace's own synthetic image (production
 /// allowlists stay empty until RS-024 Stage B evidence exists).
-fn run_policies(json: bool) -> ExitCode {
+/// `policies --dry-run [--trace <FILE>] [--json]`: the deterministic RS-019
+/// decision walk. Without `--trace` the built-in demo trace runs (pinned
+/// byte-identical). With `--trace` a user-authored
+/// `ramshaper.policy-trace.v1` file is walked instead — still SYNTHETIC
+/// (no OS reads, no OS writes; the file's allowlist is a walk input, never
+/// evidence). A missing/unparsable trace file is a configuration error
+/// (exit 2).
+fn run_policies(json: bool, trace_path: Option<&PathBuf>) -> ExitCode {
     let rules = ramshaper_core::policy::PolicyRules::default_experiment();
+
+    // A user-authored trace file: read, parse, walk, print, done (still
+    // SYNTHETIC — the walk performs no OS reads and no OS writes).
+    if let Some(path) = trace_path {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) => {
+                eprintln!("error: cannot read trace {}: {error}", path.display());
+                return ExitCode::from(2);
+            }
+        };
+        let parsed = match ramshaper_core::policy::ParsedTrace::parse(&text) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                eprintln!("error: {} is not a valid trace: {error}", path.display());
+                return ExitCode::from(2);
+            }
+        };
+        let names: Vec<&str> = parsed
+            .allowlist_names()
+            .iter()
+            .map(String::as_str)
+            .collect();
+        let allowlist =
+            ramshaper_core::eligibility::Allowlist::new(rules.rules_version.as_str(), &names);
+        let identity = parsed.target_identity();
+        let config = ramshaper_core::policy::DryRunConfig {
+            rules: &rules,
+            allowlist: &allowlist,
+            user_exclusions: &[],
+            target_identity: &identity,
+        };
+        let steps = parsed.steps();
+        let log = ramshaper_core::policy::dry_run(&config, &steps);
+        print_log(
+            json,
+            &log,
+            &format!(
+                "policies --dry-run --trace {}: SYNTHETIC trace — no OS reads, no OS writes",
+                path.display()
+            ),
+        );
+        return ExitCode::SUCCESS;
+    }
+
     let allowlist = ramshaper_core::eligibility::Allowlist::new(
         rules.rules_version.as_str(),
         &["SYNTHETIC-APP.EXE"],
@@ -1075,17 +1148,28 @@ fn run_policies(json: bool) -> ExitCode {
         target_identity: &identity,
     };
     let log = ramshaper_core::policy::dry_run(&config, &ramshaper_core::policy::demo_trace());
+    print_log(
+        json,
+        &log,
+        "policies --dry-run: SYNTHETIC trace — no OS reads, no OS writes",
+    );
+    // Deterministic success: the dry run cannot fail at runtime (§8 exit
+    // codes; a usage error already exited 2 during parsing).
+    ExitCode::SUCCESS
+}
 
+/// The shared output shape: JSON = the versioned log object verbatim;
+/// text = SYNTHETIC-marked header, the walk, the summary.
+fn print_log(json: bool, log: &ramshaper_core::policy::DryRunLog, source_label: &str) {
     if json {
-        match serde_json::to_string_pretty(&log) {
+        match serde_json::to_string_pretty(log) {
             Ok(out) => println!("{out}"),
             Err(e) => {
                 eprintln!("error: failed to serialize the dry-run log: {e}");
-                return ExitCode::from(1);
             }
         }
     } else {
-        println!("policies --dry-run: SYNTHETIC trace — no OS reads, no OS writes");
+        println!("{source_label}");
         println!(
             "schema {} (rules {}, pressure {})",
             log.schema, log.rules_version, log.pressure_rule_version
@@ -1099,9 +1183,6 @@ fn run_policies(json: bool) -> ExitCode {
             s.previews_offered, s.applies_simulated, s.actions_resolved, s.replays_ignored, s.no_actions
         );
     }
-    // Deterministic success: the dry run cannot fail at runtime (§8 exit
-    // codes; a usage error already exited 2 during parsing).
-    ExitCode::SUCCESS
 }
 
 /// One human-readable decision line.
@@ -1376,6 +1457,7 @@ mod tests {
             interval_ms: Some(interval),
             stop_after_ms: None,
             dry_run: false,
+            trace: None,
             config_path: None,
         }
     }
@@ -1389,6 +1471,7 @@ mod tests {
             interval_ms: None,
             stop_after_ms: None,
             dry_run: false,
+            trace: None,
             config_path: None,
         }
     }
@@ -1668,9 +1751,52 @@ mod tests {
                 interval_ms: Some(250),
                 stop_after_ms: Some(5_000),
                 dry_run: false,
+                trace: None,
                 config_path: None,
             })
         );
+    }
+
+    #[test]
+    fn policies_trace_flag_parses_and_is_policies_only() {
+        match parse(&["policies", "--dry-run", "--trace", "traces\\x.json"]) {
+            ParseOutcome::Run(args) => {
+                assert_eq!(
+                    args.trace,
+                    Some(PathBuf::from("traces\\x.json")),
+                    "the trace path is carried"
+                );
+            }
+            other => panic!("--trace must parse: {other:?}"),
+        }
+        // Flag order does not matter.
+        assert!(matches!(
+            parse(&["--trace", "t.json", "policies", "--dry-run", "--json"]),
+            ParseOutcome::Run(_)
+        ));
+        // Only policies accepts it.
+        assert!(matches!(
+            parse(&["--trace", "t.json", "info"]),
+            ParseOutcome::UsageError(ref m) if m.contains("only valid for policies")
+        ));
+        assert!(matches!(
+            parse(&["low-memory-watch", "--trace", "t.json"]),
+            ParseOutcome::UsageError(ref m) if m.contains("only valid for policies")
+        ));
+        assert!(matches!(
+            parse(&["policies", "--dry-run", "--trace"]),
+            ParseOutcome::UsageError(_)
+        ));
+        assert!(matches!(
+            parse(&["policies", "--trace", "t.json"]),
+            ParseOutcome::UsageError(ref m) if m.contains("--dry-run")
+        ));
+    }
+
+    #[test]
+    fn help_documents_the_trace_option() {
+        assert!(HELP.contains("--trace"));
+        assert!(HELP.contains("ramshaper.policy-trace.v1"));
     }
 
     #[test]

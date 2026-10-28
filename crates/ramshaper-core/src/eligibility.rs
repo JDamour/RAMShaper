@@ -16,6 +16,7 @@
 //! implicitly (R-10): a reused PID fails the identity check, and observed
 //! children fail the leaf-workload check.
 
+use serde::Deserialize;
 use serde::Serialize;
 
 use crate::identity::{IdentityVerification, ProcessIdentity};
@@ -30,7 +31,8 @@ pub const APPLY_INPUT_FRESHNESS_MS: u64 = 2_000;
 pub const ELIGIBILITY_RULES_VERSION: &str = "eligibility-v1";
 
 /// Owner/session observation for the target (through the validated handle).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OwnerSessionObservation {
     /// Runs as the current user in the current logon session.
     CurrentUserSession,
@@ -49,7 +51,8 @@ pub enum OwnerSessionObservation {
 /// Foreground observation. The adapter reports what it saw; freshness is
 /// decided here against [`APPLY_INPUT_FRESHNESS_MS`] so the threshold logic
 /// stays in one testable place.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FocusObservation {
     /// A foreground-state observation of known age.
     Observed {
@@ -115,6 +118,22 @@ impl ProtectedCategory {
             Self::KnownIncompatiblePriorityManager => "protected_priority_manager",
         }
     }
+
+    /// The category for a stable machine code (the inverse of [`Self::code`]
+    /// — the trace-file schema parses these, never variant names).
+    #[must_use]
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "protected_audio" => Some(Self::Audio),
+            "protected_security" => Some(Self::Security),
+            "protected_accessibility" => Some(Self::AccessibilityCritical),
+            "protected_install_update" => Some(Self::InstallUpdate),
+            "protected_game_anticheat" => Some(Self::GameAntiCheat),
+            "protected_ramshaper" => Some(Self::RamShaper),
+            "protected_priority_manager" => Some(Self::KnownIncompatiblePriorityManager),
+            _ => None,
+        }
+    }
 }
 
 // Serialized as the stable machine code, never the Rust variant name.
@@ -124,8 +143,20 @@ impl Serialize for ProtectedCategory {
     }
 }
 
+// Deserialized from the same stable machine codes (the trace-file schema
+// round-trips through the audit vocabulary, not Rust variant names).
+impl<'de> Deserialize<'de> for ProtectedCategory {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let code = String::deserialize(deserializer)?;
+        Self::from_code(&code).ok_or_else(|| {
+            serde::de::Error::custom(format!("unknown protected category code \"{code}\""))
+        })
+    }
+}
+
 /// Safety classification from the (future, tested) signal matrix (R-03).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SafetyClassification {
     /// Verified noncritical and nonprotected through tested signals.
     VerifiedNonCritical,
@@ -143,7 +174,8 @@ pub enum SafetyClassification {
 
 /// Observed current CPU priority class of the target. Only `Normal` is
 /// actionable; other originals are skipped, never "corrected" (contract 14 §5).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PriorityClassObservation {
     /// Priority process class `NORMAL_PRIORITY_CLASS`.
     Normal,
@@ -161,7 +193,8 @@ pub enum PriorityClassObservation {
 
 /// Live-children observation (R-10: leaf workloads only; descendants never
 /// inherit consent, and an observed new child invalidates the experiment).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ChildObservation {
     /// Observation completed; `live_children` is the count of live direct
     /// children at observation time.
@@ -175,7 +208,8 @@ pub enum ChildObservation {
 
 /// Whether the actuation API can change this target's priority class
 /// ("unknown API capability means deny" — contract 14 §5).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PriorityCapability {
     /// Adapter reports the capability as available for this target.
     Supported,
