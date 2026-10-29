@@ -65,6 +65,10 @@ ramshaper-cli launch -- <EXE> [ARGS...]
                                    #   exact command line); advisory monitoring, then
                                    #   monitoring removal — never a detach or a kill
 
+ramshaper-cli restore --action <ID> # ask a policy-gate agent to restore one action
+                                   #   (or --disable-all); safe direction — the agent
+                                   #   refuses with an explanation when it must
+
 ramshaper-agent serve              # per-session agent on \\.\pipe\... (read-only monitor)
 ramshaper-agent serve --policy-journal <PATH>
                                    # + policy gate present but DISABLED; startup

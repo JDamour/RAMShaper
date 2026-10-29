@@ -18,6 +18,10 @@ serde_json = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 ramshaper-windows = { workspace = true }
+ramshaper-agent = { workspace = true }
+
+[dev-dependencies]
+ramshaper-journal = { workspace = true }
 
 [lints]
 workspace = true

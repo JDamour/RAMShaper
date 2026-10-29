@@ -55,6 +55,8 @@ COMMANDS:
     config               Validate, export or atomically import TOML configuration
     launch               Launch ONE explicitly chosen executable into a fresh
                          advisory job (typed per-launch consent; RS-023)
+    restore              Ask the agent to restore one action or disable-all +
+                         restore (safe direction; needs a policy-gate agent)
 
 CONFIG USAGE:
     ramshaper-cli config export [--config <PATH>] <DEST>
@@ -92,6 +94,18 @@ LAUNCH USAGE:
     for the process lifetime; removing monitoring does not detach or stop
     the application; no kill-on-close, hard, time or process-count limits
     exist. Existing processes are never touched (RS-023).
+
+RESTORE USAGE:
+    ramshaper-cli restore [--pipe-name <NAME>] (--action <ID> | --disable-all) [--json]
+
+    Asks the session agent to restore one policy action (by durable id) or
+    to disable all actions and restore every outstanding record. The agent
+    must have been started with --policy-journal; agents without the
+    policy gate answer Unsupported (the refusal is printed, never guessed).
+    Restore is the SAFE direction: recovery is never blocked by consent,
+    an external change to the setting is preserved (Conflict), and a dead
+    target resolves without writing. Exit 0 restored (or scheduled),
+    1 refused/failed (the reason is printed), 2 usage.
 
 `config export` writes validated TOML to DEST (defaults when --config is
 absent). `config import` validates SOURCE against the closed schema
@@ -207,6 +221,19 @@ impl LaunchSpec {
     }
 }
 
+/// The `restore` request (contract 14 §8 CLI surface): one verb per
+/// invocation. The consent gate lives on the agent; this command only
+/// speaks the safe direction over the wire.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoreSpec {
+    /// `None` = derive from the logon session (the agent's own default).
+    pub pipe_name: Option<String>,
+    /// Restore one action by durable id.
+    pub action: Option<String>,
+    /// Disable all actions and restore every outstanding record.
+    pub disable_all: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Info,
@@ -215,6 +242,7 @@ pub enum Command {
     Policies,
     Config(ConfigSpec),
     Launch(LaunchSpec),
+    Restore(RestoreSpec),
 }
 
 /// Parse outcome (unit-testable, no I/O).
@@ -252,6 +280,39 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> ParseOutcome {
                 Some(value) => config_path = Some(PathBuf::from(value)),
                 None => return ParseOutcome::UsageError("--config requires a path".into()),
             },
+            "--pipe-name" => match args.next() {
+                Some(value) => {
+                    if let Some(Command::Restore(spec)) = &mut command {
+                        spec.pipe_name = Some(value.to_string_lossy().to_string());
+                    } else {
+                        return ParseOutcome::UsageError(
+                            "--pipe-name is only valid for restore".into(),
+                        );
+                    }
+                }
+                None => return ParseOutcome::UsageError("--pipe-name requires a value".into()),
+            },
+            "--action" => match args.next() {
+                Some(value) => {
+                    if let Some(Command::Restore(spec)) = &mut command {
+                        spec.action = Some(value.to_string_lossy().to_string());
+                    } else {
+                        return ParseOutcome::UsageError(
+                            "--action is only valid for restore".into(),
+                        );
+                    }
+                }
+                None => return ParseOutcome::UsageError("--action requires a value".into()),
+            },
+            "--disable-all" => {
+                if let Some(Command::Restore(spec)) = &mut command {
+                    spec.disable_all = true;
+                } else {
+                    return ParseOutcome::UsageError(
+                        "--disable-all is only valid for restore".into(),
+                    );
+                }
+            }
             "--trace" => match args.next() {
                 Some(value) => trace = Some(PathBuf::from(value)),
                 None => return ParseOutcome::UsageError("--trace requires a path".into()),
@@ -400,6 +461,13 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> ParseOutcome {
             "processes" if command.is_none() => command = Some(Command::Processes),
             "policies" if command.is_none() => command = Some(Command::Policies),
             "launch" if command.is_none() => command = Some(Command::Launch(LaunchSpec::empty())),
+            "restore" if command.is_none() => {
+                command = Some(Command::Restore(RestoreSpec {
+                    pipe_name: None,
+                    action: None,
+                    disable_all: false,
+                }));
+            }
             other => {
                 // The config subcommand takes positional paths: export has a
                 // single destination; import takes the source file (the
@@ -459,6 +527,19 @@ pub fn parse_args<I: IntoIterator<Item = OsString>>(args: I) -> ParseOutcome {
         return ParseOutcome::UsageError(
             "--advisory-max-active/--advisory-max-cpu-ms are only valid for launch".into(),
         );
+    }
+    if let Command::Restore(spec) = &mut command {
+        // Exactly one verb per invocation; the pipe name may default.
+        if spec.action.is_some() && spec.disable_all {
+            return ParseOutcome::UsageError(
+                "restore takes --action or --disable-all, not both".into(),
+            );
+        }
+        if spec.action.is_none() && !spec.disable_all {
+            return ParseOutcome::UsageError(
+                "restore requires --action <ID> or --disable-all".into(),
+            );
+        }
     }
     if let Command::Launch(spec) = &mut command {
         if spec.executable.is_empty() {
@@ -536,7 +617,7 @@ fn main() -> ExitCode {
         }
         ParseOutcome::UsageError(message) => {
             eprintln!("error: {message}");
-            eprintln!("usage: {TOOL_NAME} <info|low-memory-watch|processes|policies|config> [--json] [--interval-ms <ms>] [--stop-after-ms <ms>] [--dry-run] [--config <path>] [--into <path>]");
+            eprintln!("usage: {TOOL_NAME} <info|low-memory-watch|processes|policies|config|launch|restore> [--json] [--interval-ms <ms>] [--stop-after-ms <ms>] [--dry-run] [--config <path>] [--into <path>]");
             eprintln!("run '{TOOL_NAME} --help' for details");
             ExitCode::from(2)
         }
@@ -880,6 +961,140 @@ fn advisory_cpu_100ns(ms: u64) -> i64 {
     i64::try_from(ms.saturating_mul(10_000)).unwrap_or(i64::MAX)
 }
 
+/// The restore wire client (contract 14 §8): one fresh connection, one
+/// verb, the response verbatim. The agent enforces every rule — this
+/// command adds no authority; a gateless agent answers Unsupported and
+/// the refusal is the outcome.
+#[cfg(windows)]
+fn restore_rpc(
+    pipe_name: &str,
+    request_id: &str,
+    command: &str,
+    payload: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    use ramshaper_core::ipc::RequestEnvelope;
+    use ramshaper_windows::pipe::{client_connect, read_frame, write_frame};
+
+    const PREFIX: &str = "\\\\.\\pipe\\";
+    let name = if pipe_name.starts_with(PREFIX) {
+        pipe_name.to_string()
+    } else {
+        format!("{PREFIX}{pipe_name}")
+    };
+    let client = client_connect(&name).map_err(|error| format!("agent not reachable: {error}"))?;
+    let envelope = RequestEnvelope {
+        protocol_version: ramshaper_core::ipc::PROTOCOL_VERSION,
+        request_id: request_id.to_string(),
+        agent_instance_id: None,
+        command: command.to_string(),
+        payload,
+    };
+    let body = serde_json::to_vec(&envelope).map_err(|error| format!("encode failed: {error}"))?;
+    write_frame(&client, &body).map_err(|error| format!("write failed: {error}"))?;
+    let frame = read_frame(&client).map_err(|error| format!("read failed: {error}"))?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&frame).map_err(|error| format!("malformed response: {error}"))?;
+    if value["ok"] == true {
+        Ok(value["data"].clone())
+    } else {
+        Err(format!(
+            "{}: {}",
+            value["error"]["code"].as_str().unwrap_or("unknown"),
+            value["error"]["message"].as_str().unwrap_or("")
+        ))
+    }
+}
+
+/// `restore` (contract 14 §8): the safe direction over the wire. stdout
+/// carries the outcome JSON; stderr the refusals. Exit 0 restored or
+/// scheduled, 1 refused/failed (Unsupported, Conflict, unreachable...),
+/// 2 usage (handled at parse time).
+#[cfg(windows)]
+fn run_restore(spec: &RestoreSpec, json: bool) -> ExitCode {
+    use ramshaper_core::ipc::{
+        DisableActionsRequest, RestoreActionRequest, COMMAND_DISABLE_ACTIONS,
+        COMMAND_RESTORE_ACTION,
+    };
+
+    let pipe_name = match &spec.pipe_name {
+        Some(name) => name.clone(),
+        None => match ramshaper_agent::server::default_pipe_name() {
+            Ok(name) => name,
+            Err(error) => {
+                eprintln!("error: cannot derive the default pipe name: {error}");
+                eprintln!("pass --pipe-name explicitly");
+                return ExitCode::from(1);
+            }
+        },
+    };
+
+    let (command, payload, request_id) = if let Some(action_id) = &spec.action {
+        (
+            COMMAND_RESTORE_ACTION,
+            serde_json::to_value(RestoreActionRequest {
+                action_id: action_id.clone(),
+            })
+            .expect("restore payload serializes"),
+            "cli-restore".to_string(),
+        )
+    } else {
+        (
+            COMMAND_DISABLE_ACTIONS,
+            serde_json::to_value(DisableActionsRequest {}).expect("disable payload serializes"),
+            "cli-disable-all".to_string(),
+        )
+    };
+
+    match restore_rpc(&pipe_name, &request_id, command, Some(payload)) {
+        Ok(data) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "schema": "ramshaper.restore.v1",
+                        "verb": command,
+                        "outcome": data,
+                    })
+                );
+            } else if let Some(action_id) = &spec.action {
+                let outcome = data["outcome"].as_str().unwrap_or("unknown");
+                match outcome {
+                    "restored" => println!(
+                        "action {action_id} restored (wrote_back: {})",
+                        data["wrote_back"].as_bool().unwrap_or(false)
+                    ),
+                    "retry_scheduled" => println!(
+                        "action {action_id}: restore retry scheduled (due at {} ms)",
+                        data["due_unix_ms"]
+                    ),
+                    "manual_retry" => println!(
+                        "action {action_id}: bounded retries exhausted; the record stays pending for manual retry"
+                    ),
+                    other => println!("action {action_id}: {other}"),
+                }
+            } else {
+                println!(
+                    "disable-all: {} restored/resolved",
+                    data["restored"].as_u64().unwrap_or(0)
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Err(message) => {
+            eprintln!("error: {message}");
+            eprintln!("nothing was changed by this command");
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// The restore command requires the Windows pipe adapter.
+#[cfg(not(windows))]
+fn run_restore(_spec: &RestoreSpec, _json: bool) -> ExitCode {
+    eprintln!("error: restore requires the Windows adapter; this platform is not supported");
+    ExitCode::from(1)
+}
+
 fn run(args: CliArgs) -> ExitCode {
     let config = match load_config(args.config_path.as_ref()) {
         Ok(config) => config,
@@ -901,6 +1116,7 @@ fn run(args: CliArgs) -> ExitCode {
             args.interval_ms.unwrap_or(DEFAULT_PROCESS_INTERVAL_MS),
         ),
         Command::Policies => run_policies(args.json, args.trace.as_ref()),
+        Command::Restore(spec) => run_restore(&spec, args.json),
         Command::Launch(spec) => run_launch(
             &spec,
             args.json,
@@ -1897,6 +2113,57 @@ mod tests {
         assert!(matches!(
             parse(&["processes", "--stop-after-ms", "5000"]),
             ParseOutcome::UsageError(ref m) if m.contains("low-memory-watch and launch")
+        ));
+    }
+
+    #[test]
+    fn restore_parses_its_verb_rules() {
+        // Exactly one verb required.
+        assert!(matches!(
+            parse(&["restore", "--pipe-name", "p"]),
+            ParseOutcome::UsageError(ref m) if m.contains("--action")
+        ));
+        assert!(matches!(
+            parse(&["restore", "--pipe-name", "p", "--action", "a", "--disable-all"]),
+            ParseOutcome::UsageError(ref m) if m.contains("not both")
+        ));
+        // Verb flags are restore-only.
+        assert!(matches!(
+            parse(&["--action", "a", "info"]),
+            ParseOutcome::UsageError(ref m) if m.contains("only valid for restore")
+        ));
+        assert!(matches!(
+            parse(&["--disable-all", "info"]),
+            ParseOutcome::UsageError(ref m) if m.contains("only valid for restore")
+        ));
+        assert!(matches!(
+            parse(&["--pipe-name", "p", "info"]),
+            ParseOutcome::UsageError(ref m) if m.contains("only valid for restore")
+        ));
+        // The flag value is required.
+        assert!(matches!(
+            parse(&["restore", "--pipe-name"]),
+            ParseOutcome::UsageError(_)
+        ));
+        assert!(matches!(
+            parse(&["restore", "--action"]),
+            ParseOutcome::UsageError(_)
+        ));
+        // The happy parse: both verbs parse; the pipe name defaults to None.
+        match parse(&["restore", "--pipe-name", "p", "--action", "act-1"]) {
+            ParseOutcome::Run(args) => {
+                assert!(!args.json);
+            }
+            other => panic!("restore must parse: {other:?}"),
+        }
+        assert!(matches!(
+            parse(&["restore", "--disable-all", "--json"]),
+            ParseOutcome::Run(_)
+        ));
+        // --dry-run stays policies-only.
+        assert!(matches!(
+            parse(&["restore", "--dry-run"]),
+            ParseOutcome::UsageError(_)
         ));
     }
 
