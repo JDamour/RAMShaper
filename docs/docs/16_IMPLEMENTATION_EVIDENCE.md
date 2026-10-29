@@ -2948,3 +2948,33 @@ release binaries, gateless agent = the production refusal state):
   eventually walk someone else's window.
 - The interactive Narrator/DPI pass remains the human AT-19 item, now
   covering the final four-page surface.
+
+---
+
+# CI certification at HEAD + the parallel-test blocker, 2026-10-29
+
+The 2026-10-25 local certification pattern (all CI pushes had failed at
+billing in seconds — the workflow had never executed anywhere) repeated
+at the 0.3.61 head:
+
+- **Steps certified locally, exactly as written:** fmt-check clean;
+  `cargo check --workspace --all-targets --locked` clean; clippy
+  (locked, `-D warnings`) clean; the release triple build clean
+  (0.3.61's 19 m 31 s build); and the full smoke script — `SMOKE: ALL
+  CHECKS PASSED` (version/info/info-json schema/usage-error exits/help/
+  interval range/processes schema + FILETIME-string identity/bad-config
+  exit 2/observer-overhead/agent version).
+- **The certification caught a would-be red:** CI's test step ran
+  `cargo test --workspace --locked` (parallel), and the job-suite's
+  live test `accounting_reports_process_counts_and_cpu_time` failed
+  twice in the parallel form (424/1): its ping child does not
+  accumulate CPU time within the 10 s poll window under parallel spawn
+  load — the RS-022 environmental pattern (fresh children charge zero
+  CPU until scheduled) at CI scale. The serial form passes 443/0
+  consistently. **Fix: `ci.yml`'s test step now runs
+  `--test-threads=1`**, with the reasoning recorded in the workflow
+  — CI must match the serial form every local gate has always used;
+  a CI that flakes on live timing tests certifies nothing.
+- Remaining honest caveat: local Windows is not the GitHub runner —
+  the certification de-risks but cannot guarantee the hosted run.
+  The moment billing is fixed, the next push is expected green.

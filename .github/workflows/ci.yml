@@ -32,8 +32,14 @@ jobs:
       - name: Lint (clippy, deny warnings, locked)
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
-      - name: Tests (locked)
-        run: cargo test --workspace --locked
+      - name: Tests (locked, serial)
+        # Serial because the live Windows tests are order-sensitive: the
+        # job-suite's ping children do not accumulate CPU fast enough
+        # under parallel spawn load (a 10 s poll observed empty twice —
+        # recorded in doc 16), and transient CreateProcessW code-5 spawn
+        # refusals appear under parallel load. Every local gate runs the
+        # same form; CI must match it to certify anything.
+        run: cargo test --workspace --locked -- --test-threads=1
 
       - name: Release build x86_64-pc-windows-msvc (locked)
         run: cargo build --release --target x86_64-pc-windows-msvc --locked
