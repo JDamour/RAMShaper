@@ -2879,3 +2879,48 @@ Design-memo follow-up ticket 3 (after the subject binary, ticket 2):
   ([design/stage-b-trial-runbook.md](../design/stage-b-trial-runbook.md)
   — six preconditions incl. the real-Elevated-pressure requirement,
   the [ADR-045] placeholder, plan-frozen analysis, bundle, recording).
+
+---
+
+# AT-06 soak attempt 4 — died to a system suspend at 5 h 36 m, 2026-10-28/29
+
+Attempt 4 of the criteria-declared rig (launched 2026-10-28T18:19:26Z on the
+0.3.50 release build, RUN_LOG attempt-4 entry) died at
+**2026-10-28T23:55:56.867Z** — 5 h 36 m 30 s into the 24-hour plan. The
+driver, the 1 Hz watch child and all rig processes terminated
+**simultaneously**: a whole-system event. The System event log names it:
+Kernel-Power **event 42, "entering sleep — Sleep Reason: Application
+API"** at 23:56:03Z (an application requested the suspend; not an idle
+timeout), resume ten seconds later, rig processes already dead. Fourth
+consecutive external death (2× powershell reaping, 1× overnight
+shutdown, 1× application-API suspend); the rig itself has never
+failed.
+
+**What the 5.6 hours prove** (interim analyzer on 34 windows + 20,146
+continuous watch samples; archived `attempt4-suspend/` with the interim
+verdict text):
+
+- **C2 budgets and C4 leak checks all PASS**: max bench working set
+  5.98 MiB and max watch WS 5.05 MiB against the < 25 MiB limit,
+  derived normalized CPU 0.463 % against < 1 %, working-set slopes
+  negative (no leak) — the NFR-01 core held without incident for the
+  whole window.
+- **C1 continuity clean during the run**: sample sequence 1..20146 with
+  zero gaps (max cadence gap 3.59 s); every scheduled bench window
+  parsed with zero failures. The analyzer's interim C1 FAIL rows are a
+  death artifact — they count the ~12 post-death hours as dropped.
+- **C3 scan/snapshot latency over the declared limits** (scan p50
+  79.051 ms vs 41.7 ms; scan p99 5.275 s; snapshot p99 6.946 ms) —
+  the **pre-declared finding** (2026-10-24, PASS_CRITERIA.md: thresholds
+  derived from the AT-21 ~347-process baseline; this machine runs
+  620–700 processes under active development load). The degradation
+  check (last-12 vs first-12 windows, ×1.00) shows the excess is
+  load-correlated, not time-correlated. Recorded as a finding; the
+  thresholds were not touched.
+
+**Relaunch-vs-fold is the owner's decision** (four deaths on record;
+options recorded in the RUN_LOG: stop the suspend source and relaunch /
+run AT-06 on a machine that stays up — possibly a declared cohort
+machine, where the C3 limits would also be evaluated on home ground /
+fold with the C3 finding recorded from this partial). The agent did not
+relaunch on its own.

@@ -81,3 +81,43 @@ amshaper-cli.exe and
   do NOT kill the rig to unblock a build).
 - attempt3-shutdown/watch.jsonl (60 MB, 6 minutes of the dead attempt) is preserved on disk but excluded from git per the recorded LFS-size guidance; the archive's small files (soak.jsonl, logs) are committed.
 - attempt-4 live `watch.jsonl` is likewise excluded from git (2026-10-28): at ~0.14 MB/min it would reach ~150-200 MB by the planned end — far over GitHub's 100 MB per-file reject limit — so the verdict commit carries soak.jsonl + driver.log only, and the full watch stream stays on disk beside them (path recorded here; preserved verbatim for the analyzer).
+
+## Attempt 4 — WMI + pythonw.exe host (DIED TO A SYSTEM SUSPEND at 5 h 36 m; archived in attempt4-suspend/)
+
+- Launched 2026-10-28T18:19:26Z; **last sample 2026-10-28T23:55:56.867Z** — the
+  driver (pythonw 17132), the watch child (pid 3156) and all rig processes
+  terminated **simultaneously within one second**: a whole-system event, not
+  selective reaping (attempts 1–2 killed only the powershell host and the watch
+  child survived; this time nothing survived).
+- **Cause, from the System event log:** Kernel-Power **event 42** at
+  2026-10-28T23:56:03Z local (2026-10-29 01:56:03) — "The system is entering
+  sleep. **Sleep Reason: Application API**" (an application requested the
+  suspend via API; not an idle timeout) — with **event 107 "resumed from
+  sleep"** ten seconds later. The rig processes were dead *before* the sleep
+  began (last sample 7 s prior); the same agent-session tooling suspected in
+  attempts 1–2 is the plausible actor. Fourth consecutive external death
+  (2× powershell reaping, 1× overnight shutdown, 1× application-API suspend).
+- **Data captured:** 34/144 bench windows (all parsed, zero failures) +
+  20,146 continuous 1 Hz watch samples (sequence 1..20146, no gaps, max
+  cadence gap 3.59 s) — 5 h 36 m 30 s of the 24 h plan.
+- **Interim verdict on the partial data** (analyze_soak.py, exit 2 INTERIM;
+  saved context below): **C2 and C4 all PASS** — max bench WS 5.98 MiB,
+  max watch WS 5.05 MiB (limit < 25), derived normalized CPU 0.463 %
+  (limit < 1 %), WS slopes negative (no leak). **C1 clean during the run** —
+  the analyzer's C1 FAIL rows count the ~12 post-death hours as dropped
+  windows/samples; during the run there were none. **C3 scan/snapshot
+  latency over the declared limits** (scan p50 79.051 ms vs 41.7 ms limit;
+  scan p99 5.275 s; snapshot p99 6.946 ms) — the pre-declared finding:
+  thresholds derive from the AT-21 ~347-process baseline and this machine
+  runs 620–700 processes under active dev load; the degradation check
+  (last-12 vs first-12 windows ×1.00) shows the excess is load-correlated,
+  not time-correlated. Per the pre-commitment: **recorded as a finding;
+  thresholds were not touched.**
+- **Relaunch-vs-fold is the owner's decision** (four deaths on record). The
+  event-log evidence frames the concrete options: (a) identify and stop
+  whatever issues Application-API suspends on this box (owner's machine
+  management) and relaunch; (b) run AT-06 on a machine that stays up —
+  possibly a declared cohort machine, where C3's baseline-derived limits
+  would also be evaluated on their home ground; (c) fold: record the C3
+  finding from the 5.6-hour partial (C2/C4 evidence is already clean) and
+  accept the gate consequence. NOT relaunched by the agent on its own.

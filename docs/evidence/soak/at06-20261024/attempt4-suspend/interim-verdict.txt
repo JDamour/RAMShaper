@@ -1,0 +1,25 @@
+AT-06 soak: started 2026-10-28T18:19:26Z, planned end 2026-10-29T18:19:26Z
+  windows captured=34 failed=0 expected-so-far=109 of 144  (unparseable lines: 0)
+  status: IN PROGRESS  elapsed=18.04 h
+
+Criteria (PASS_CRITERIA.md):
+  [FAIL] C1 bench: dropped windows                   measured=75 dropped  limit=<= 2  checked once >=12 windows elapsed
+  [FAIL] C1 bench: consecutive dropped               measured=max streak 75  limit=<= 2
+  [FAIL] C1 watch: samples present                   measured=no samples  limit=>= 99%  watch channel produced nothing
+  [PASS] C2: max bench working set                   measured=5.98 MiB  limit=< 25 MiB
+  [PASS] C2: max bench private commit                measured=1.30 MiB  limit=< 25 MiB
+  [PASS] C2: max watch working set                   measured=5.05 MiB  limit=< 25 MiB
+  [PASS] C2: derived normalized CPU (estimate)       measured=0.463%  limit=< 1%  = mean(scan p50)/1000/20 LPs at 1 Hz; estimate, not a measurement
+  [FAIL] C3: scan soak p50 (median of report p50s)   measured=79.051 ms  limit=<= 41.7 ms (0.061 x N=684)
+  [FAIL] C3: scan soak p99 (p99 of report p95s)      measured=5274.923 ms  limit=<= 60.2 ms (0.088 x N=684)
+  [FAIL] C3: scan absolute max                       measured=12870.931 ms  limit=<= 84.1 ms (0.123 x N=684)
+  [FAIL] C3: snapshot soak p50                       measured=0.295 ms  limit=<= 0.15 ms
+  [FAIL] C3: snapshot soak p99                       measured=6.946 ms  limit=<= 0.5 ms
+  [FAIL] C3: snapshot absolute max                   measured=88.733 ms  limit=<= 2.0 ms
+  [PASS] C3: min process_count_last                  measured=621  limit=>= 100
+  [PASS] C3: degradation last12 vs first12           measured=last=74.412 first=74.273 (x1.00)  limit=<= x1.25
+  [PASS] C4: bench WS slope                          measured=-25.1 KiB/h  limit=< +50.0 KiB/h
+  [PASS] C4: watch WS slope                          measured=-84.7 KiB/h  limit=< +100.0 KiB/h  leak check for RS-008 bounded history
+  [PASS] C4: final watch WS                          measured=4.61 MiB  limit=< 25 MiB
+
+VERDICT: INTERIM - run in progress (34/144 windows); ends 2026-10-29T18:19:26Z. Failure rows above are already final for the data so far.
