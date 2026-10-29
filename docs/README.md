@@ -42,9 +42,9 @@ The [master reference](RAMShaper_Master_Reference.md) is a reading guide. The [o
 1. ~~Read-only CLI and Windows error-handling evidence~~ — **G0 passed 2026-10-23**.
 2. ~~Process telemetry, bounded history and observer-overhead baseline~~ — **implemented; G1 awaits the 24-hour soak and declared cohorts**.
 3. ~~Native observation UI and inert profile settings~~ — **shipped as slices** (Overview/Applications/Profiles/Actions; license pick and the interactive accessibility pass remain).
-4. ~~One manually approved temporary CPU-priority policy, after recovery tests~~ — **code-complete behind typed session consent**; the allowlist ships empty until Stage B testing; the consent-driven UI flow is the remaining owner-gated piece.
-5. Managed launch beta, after Job lifetime/compatibility tests — **RS-020 spike done**; RS-021–023 open.
-6. Full benchmark wizard and evidence-backed release — **Stage A + Stage B runner landed**; cohorts, quantiles/CI wizard and packaging open.
+4. ~~One manually approved temporary CPU-priority policy, after recovery tests~~ — **code-complete behind typed session consent** (the typed console `ENABLE`; a UI consent flow was deliberately not built); the allowlist ships empty until Stage B testing; the gate assessment (2026-10-27) records every owner-independent case as Passed with four owner/human sign-off blockers.
+5. Managed launch beta — **RS-020–023 implemented** (creation-time job launch, observation/accounting, the `launch` command behind typed per-launch consent); the release gate (G3 sign-off + the launcher-crash lifecycle matrix) stays open.
+6. Full benchmark wizard and evidence-backed release — **Stage A + the complete Stage B machinery landed** (workload runner, preregistration, analysis, subject binary, trial driver, runbook); the first real trial awaits owner decisions; cohorts, the quantiles/CI wizard (RS-024C) and packaging remain.
 
 Benchmark instrumentation begins in the observation phase. No automatic optimization is authorized by selecting a profile or importing settings.
 
@@ -56,6 +56,6 @@ The four images in [design](design/01_dashboard.png) are generated visual refere
 
 ## Working in this package
 
-The workspace has a documentation package at `docs/`, with the canonical numbered documents at `docs/docs/`. The application increment (Cargo workspace, `crates/ramshaper-core|platform|windows|cli|agent|ui|bench|journal`, CI, `BUILDING.md`) lives at the workspace root; the documentation was not moved. Build commands and prerequisites are in the root `BUILDING.md`; executed evidence is in [16](docs/16_IMPLEMENTATION_EVIDENCE.md); raw artifacts per slice are under `docs/evidence/`.
+The workspace has a documentation package at `docs/`, with the canonical numbered documents at `docs/docs/` and design notes/memos at `docs/design/`. The application increment (Cargo workspace, `crates/ramshaper-core|platform|windows|cli|agent|ui|bench|journal|subject|trial`, CI, `BUILDING.md`) lives at the workspace root; the documentation was not moved. Build commands and prerequisites are in the root `BUILDING.md`; executed evidence is in [16](docs/16_IMPLEMENTATION_EVIDENCE.md); raw artifacts per slice are under `docs/evidence/`.
 
 For every implemented increment, record commands, exit codes, Windows build, privileges, source revision and evidence artifacts. Preserve failed, neutral and unavailable results. Read [AGENTS.md](AGENTS.md) before implementation. No software license or dependency approval is implied by these planning files.

@@ -1,0 +1,54 @@
+{
+    "schema":  "ramshaper.provenance.v1",
+    "generated_at_utc":  "2026-10-29T17:39:27Z",
+    "toolchain":  {
+                      "rustc":  "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+                      "cargo":  "cargo 1.93.1 (083ac5135 2025-12-15)"
+                  },
+    "lockfile":  {
+                     "cargo_lock_sha256":  "b18b73266aea95c42b24c587da8d898a105a9be163768a9d5f1fd5b1dc4d22ae",
+                     "rust_toolchain":  "[toolchain]\nchannel = \"1.93.1\"\nprofile = \"minimal\"\ncomponents = [\"rustfmt\", \"clippy\"]\ntargets = [\"x86_64-pc-windows-msvc\"]"
+                 },
+    "binaries":  [
+                     {
+                         "name":  "ramshaper-agent.exe",
+                         "path":  "F:\\_RAMShaper\\target\\x86_64-pc-windows-msvc\\release\\ramshaper-agent.exe",
+                         "size_bytes":  2811392,
+                         "sha256":  "fc86cbaf266f1b083cb5bc27c429fe474ad22cc4e2b7922cc25b63534a74603a"
+                     },
+                     {
+                         "name":  "ramshaper-bench.exe",
+                         "path":  "F:\\_RAMShaper\\target\\x86_64-pc-windows-msvc\\release\\ramshaper-bench.exe",
+                         "size_bytes":  757248,
+                         "sha256":  "70225f2ff3638a3d6cf5a91b7405fe8f091fc50c673bb90a7a63851e2d86e152"
+                     },
+                     {
+                         "name":  "ramshaper-cli.exe",
+                         "path":  "F:\\_RAMShaper\\target\\x86_64-pc-windows-msvc\\release\\ramshaper-cli.exe",
+                         "size_bytes":  1030656,
+                         "sha256":  "46efe0914496d206387428e2553b6cb5d257bcfbcc796c07ed9701d16bffed98"
+                     },
+                     {
+                         "name":  "ramshaper-subject.exe",
+                         "path":  "F:\\_RAMShaper\\target\\x86_64-pc-windows-msvc\\release\\ramshaper-subject.exe",
+                         "size_bytes":  288256,
+                         "sha256":  "ceeea35eafdbcf1f0ce71952200d76f685ebef3fd6e09fc1f191ba00f3e728de"
+                     },
+                     {
+                         "name":  "ramshaper-trial.exe",
+                         "path":  "F:\\_RAMShaper\\target\\x86_64-pc-windows-msvc\\release\\ramshaper-trial.exe",
+                         "size_bytes":  457728,
+                         "sha256":  "e0329fd076a88c793c48bfcd7f2ad8152aeb4a65063f03d8c28fa6ce303c43be"
+                     },
+                     {
+                         "name":  "ramshaper-ui.exe",
+                         "path":  "F:\\_RAMShaper\\target\\x86_64-pc-windows-msvc\\release\\ramshaper-ui.exe",
+                         "size_bytes":  15370240,
+                         "sha256":  "041dc9c2be5a7d4da29a41cb4cf19981f85b873524aca8c8492ee0aecd02cb7d"
+                     }
+                 ],
+    "git":  {
+                "head":  "161b60fbb7328415c92a9bbeff5d85348f1d8307",
+                "working_tree":  "dirty"
+            }
+}
