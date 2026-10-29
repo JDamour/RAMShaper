@@ -1,0 +1,26 @@
+window: name='RAMShaper' framework='Slint' serverSide=1
+  ControlType.Text name='RAMShaper' focusable=False
+  ControlType.Text name='read-only observation' focusable=False
+  ControlType.Button name='Overview' focusable=True
+  ControlType.Button name='Applications' focusable=True
+  ControlType.Button name='Profiles' focusable=True
+  ControlType.Button name='Actions (current page)' focusable=True
+  ControlType.Text name='Mode: Observe Only. RAMShaper will not change process settings.' focusable=False
+  ControlType.Text name='System: Windows 10 Pro · 10.0.26300.9711' focusable=False
+  ControlType.Text name='Serving agent instance: agent: cli-58156-134377674395401702' focusable=False
+  ControlType.Text name='Current profile: unavailable' focusable=False
+  ControlType.Text name='Data freshness: just updated' focusable=False
+  ControlType.Button name='Quit' focusable=True
+  ControlType.Text name='Actions status: 0 action record(s), 0 pending. no policy actions exist in this build (observe only)' focusable=False
+  ControlType.Button name='Disable all + restore' focusable=True
+  ControlType.Table name='Action records: pending, conflict and history' focusable=False
+  ControlType.Text name='Actions exist only when an explicit policy session is enabled; agents start Observe Only and a restart restores every outstanding record before serving. An agent without the policy gate answers 'unsupported' for the controls — the page says so instead of pretending.' focusable=False
+    ControlType.List name='' focusable=False
+    ControlType.Text name='Disable all + restore' focusable=False
+    ControlType.Text name='Quit' focusable=False
+    ControlType.Text name='Mode: Observe Only' focusable=False
+    ControlType.Text name='Actions' focusable=False
+    ControlType.Text name='Profiles' focusable=False
+    ControlType.Text name='Applications' focusable=False
+    ControlType.Text name='Overview' focusable=False
+total: 24 elements

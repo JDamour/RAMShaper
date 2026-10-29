@@ -2924,3 +2924,27 @@ run AT-06 on a machine that stays up — possibly a declared cohort
 machine, where the C3 limits would also be evaluated on home ground /
 fold with the C3 finding recorded from this partial). The agent did not
 relaunch on its own.
+
+---
+
+# AT-19 automated portion — the Actions page inventoried, 2026-10-29
+
+The 2026-10-24 UIA inventory predates the Actions page (0.3.32); the
+automated evidence now covers it (`docs/evidence/2026-10-29-at19-actions-page/`,
+release binaries, gateless agent = the production refusal state):
+
+- 24 elements, Slint server-side provider: four named nav buttons with
+  `Actions (current page)` marked (all focusable), the status line
+  carrying the state as text, the focusable `Disable all + restore`
+  control, the named records table, and the gateless refusal rendered
+  verbatim as element text. No color-only information — the AT-19
+  stale/unavailable-state requirement holds on the new page.
+- **Recorded gotcha (cost the first two walks):** leftover UI processes
+  from earlier evidence runs answered the probe — a stale debug
+  `ramshaper-ui` (RS-010-era, rebuilt from current source during this
+  slice) plus process-count ambiguity made the first walks examine the
+  wrong window. The clean run asserts exactly one UI process before
+  walking. Walking a UIA tree without asserting the process count will
+  eventually walk someone else's window.
+- The interactive Narrator/DPI pass remains the human AT-19 item, now
+  covering the final four-page surface.
