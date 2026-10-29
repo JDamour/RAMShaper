@@ -1,0 +1,20 @@
+physical total 63.7 GiB, available 30.4 GiB
+commit limit 67.7 GiB, free commit 13.7 GiB (charged 54.1 GiB)
+
+top 10 commit holders:
+
+Name       Id CommitMB
+----       -- --------
+dwm     35364     1056
+vlc     26548      984
+Unity   39112      976
+claude  26392      813
+chrome  10064      809
+claude  58236      705
+MsMpEng 46548      698
+claude  20452      695
+claude  47336      669
+Unity   38868      654
+
+
+

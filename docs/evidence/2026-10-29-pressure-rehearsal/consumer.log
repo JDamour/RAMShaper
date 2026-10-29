@@ -1,0 +1,7 @@
+step 1: +3 GiB touched (total 3 GiB; free virtual 13574580 KB)
+step 2: +3 GiB touched (total 6 GiB; free virtual 10062340 KB)
+step 3: +3 GiB touched (total 9 GiB; free virtual 7426408 KB)
+commit guard at step 3: free virtual 3974028 KB
+holding allocations until killed or 90 s elapse...
+releasing
+released
