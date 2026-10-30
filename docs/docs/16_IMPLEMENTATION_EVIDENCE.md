@@ -2979,6 +2979,13 @@ at the 0.3.61 head:
   the certification de-risks but cannot guarantee the hosted run.
   The moment billing is fixed, the next push is expected green.
 
+Update 2026-10-30: the 0.3.64 push (82d5a63) reached origin; the
+triggered `windows-ci` run (41098517164) was still rejected in 3 s by
+the same billing annotation ("The job was not started because recent
+account payments have failed or your spending limit needs to be
+increased"). The workflow has still never executed anywhere; rerun it
+once billing is resolved — no code action is pending on CI.
+
 ---
 
 # Journal read-failure safety (contract-14 audit follow-up), 2026-10-30
