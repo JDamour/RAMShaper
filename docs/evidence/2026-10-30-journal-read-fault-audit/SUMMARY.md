@@ -17,6 +17,7 @@ files in this directory. Nothing is projected.
 | `cargo build --release --target x86_64-pc-windows-msvc --locked` | `release-build.log` | exit 0 — `Finished release profile [optimized] target(s) in 3m 17s` (incremental over the warm 0.3.62 target dir) |
 | `target/x86_64-pc-windows-msvc/release/ramshaper-agent.exe --version` | this file | `ramshaper-agent 0.1.0` |
 | `…ramshaper-agent.exe --help` | `agent-help-release.txt` | the shipped help documents `--policy-journal`, the `ENABLE` consent and the POLICY STAGE block |
+| `powershell -NoProfile -ExecutionPolicy Bypass -File docs/evidence/2026-10-30-journal-read-fault-audit/ci-smoke.ps1` | `ci-smoke.ps1` (verbatim extract), `smoke.log` | exit 0 — every CI smoke check passed against this slice's release binaries |
 
 Test tally method: `grep '^test result:' test-serial.log | summed passed/failed`
 → 454 passed, 0 failed, 0 error. The 447 pre-existing tests plus the 7
@@ -34,6 +35,17 @@ Live e2e suites that exercise the changed enable path on real journals
 and real child processes all passed inside the serial run (agent
 `policy_ipc.rs` 8 tests incl. the clean-exit trigger and the live
 ticker; CLI `restore.rs` 3 tests incl. the gateless wire refusal).
+
+## Smoke-script provenance and shell caveat
+
+`ci-smoke.ps1` is the `CLI smoke test as standard user` step of
+`.github/workflows/ci.yml` extracted verbatim (2026-10-30, at 7931411).
+CI declares `shell: pwsh` (PowerShell 7); this machine has only Windows
+PowerShell 5.1, so the local run used 5.1 — the script's constructs
+(`& $exe`, `$LASTEXITCODE`, `ConvertFrom-Json`, integer type checks,
+`New-TemporaryFile`, stderr suppression) behave identically for this
+script, and the same "local is not the GitHub runner" caveat as every
+recorded certification applies.
 
 ## Not run (recorded, not hidden)
 

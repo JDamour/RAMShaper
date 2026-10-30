@@ -1,0 +1,34 @@
+ramshaper-cli 0.1.0
+RAMShaper system memory snapshot
+  schema          : ramshaper.snapshot.v1
+  observed (UTC)  : 2026-10-30T19:52:15.796Z
+  agent instance  : cli-21652-134378635357535737
+  sample sequence : 1
+  tool            : ramshaper-cli 0.1.0
+  OS              : Windows 10 Pro 10.0.26300.9818, 26H2, x86_64 (source: RtlGetVersion;GetNativeSystemInfo;HKLM CurrentVersion)
+
+Physical memory (source: GetPerformanceInfo, pages converted to bytes)
+  total          :  63.75 GiB (68448034816 bytes)
+  available      :  31.67 GiB (34001080320 bytes)
+  in use         :  32.08 GiB (34446954496 bytes) (derived)  [derived: in_use = total - available (one snapshot)]
+
+System commit (source: GetPerformanceInfo; system commit charge, not pagefile occupancy)
+  used           :  49.08 GiB (52696711168 bytes)
+  limit          :  67.75 GiB (72743002112 bytes)
+  headroom       :  18.67 GiB (20046290944 bytes) (derived)  [derived: headroom = limit - used (one snapshot)]
+
+Low-memory notification (source: QueryMemoryResourceNotification)
+  state           : not signaled
+
+Notes: 'available' is not merely unused pages. Commit is the system commit
+charge, not pagefile occupancy. A low-memory signal is an OS resource
+condition and does not by itself prove a user-visible slowdown.
+
+Memory pressure (rule pressure_v1)
+  state           : unknown
+  evidence        : complete
+  note            : a single observation cannot establish Normal/Elevated; watch to accumulate evidence
+  meaning         : Insufficient valid observations to classify memory pressure
+measuring 20 system-snapshot iterations...
+measuring 20 process-scan iterations...
+ramshaper-agent 0.1.0

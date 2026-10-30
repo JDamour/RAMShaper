@@ -2984,7 +2984,14 @@ triggered `windows-ci` run (41098517164) was still rejected in 3 s by
 the same billing annotation ("The job was not started because recent
 account payments have failed or your spending limit needs to be
 increased"). The workflow has still never executed anywhere; rerun it
-once billing is resolved — no code action is pending on CI.
+once billing is resolved — no code action is pending on CI. The same
+day, the one ci.yml step the 0.3.64 local certification had not yet
+mirrored — the inline CLI smoke script — was extracted verbatim and run
+against this slice's release binaries: every check passed, exit 0
+(PowerShell 5.1 locally vs CI's pwsh 7; constructs identical for this
+script; evidence in `docs/evidence/2026-10-30-journal-read-fault-audit/`:
+`ci-smoke.ps1`, `smoke.log`). All six CI steps are now locally certified
+for 0.3.64.
 
 ---
 

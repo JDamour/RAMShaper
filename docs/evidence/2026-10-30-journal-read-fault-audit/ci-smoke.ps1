@@ -1,0 +1,62 @@
+$exe = "target/x86_64-pc-windows-msvc/release/ramshaper-cli.exe"
+if (-not (Test-Path $exe)) { Write-Error "binary not found: $exe"; exit 1 }
+
+& $exe --version
+if ($LASTEXITCODE -ne 0) { Write-Error "--version failed"; exit 1 }
+
+& $exe info | Out-Host
+if ($LASTEXITCODE -eq 2) { Write-Error "info returned usage error"; exit 1 }
+
+$json = & $exe info --json | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { Write-Error "info --json failed"; exit 1 }
+if (-not $json.schema) { Write-Error "schema field missing"; exit 1 }
+if ($json.metrics.physical_total_bytes.status -ne "ok") {
+  Write-Error "physical_total_bytes not ok"; exit 1
+}
+if ($json.metrics.physical_total_bytes.value -isnot [long] -and
+    $json.metrics.physical_total_bytes.value -isnot [int]) {
+  Write-Error "physical_total_bytes.value is not an integer"; exit 1
+}
+if ($json.metrics.low_memory.status -ne "ok") {
+  Write-Error "low_memory not ok"; exit 1
+}
+
+# Usage errors must exit 2 and print nothing on stdout.
+$stdout = & $exe not-a-command 2>$null
+if ($LASTEXITCODE -ne 2) { Write-Error "unknown command must exit 2"; exit 1 }
+if ($stdout) { Write-Error "usage error wrote to stdout"; exit 1 }
+
+# Help must exit 0.
+& $exe --help | Out-Null
+if ($LASTEXITCODE -ne 0) { Write-Error "--help failed"; exit 1 }
+
+# Out-of-range interval is a usage error (exit 2).
+& $exe low-memory-watch --interval-ms 1 2>$null
+if ($LASTEXITCODE -ne 2) { Write-Error "--interval-ms 1 must exit 2"; exit 1 }
+
+# Process inventory: schema and identity shape.
+$procs = & $exe processes --json --interval-ms 200 | ConvertFrom-Json
+if ($LASTEXITCODE -eq 2) { Write-Error "processes returned usage error"; exit 1 }
+if ($procs.schema -ne "ramshaper.processes.v1") { Write-Error "processes schema wrong"; exit 1 }
+if ($procs.processes.Count -lt 20) { Write-Error "too few processes"; exit 1 }
+foreach ($p in $procs.processes[0..2]) {
+  if ($p.identity.creation_filetime_100ns -isnot [string]) {
+    Write-Error "identity FILETIME must be a decimal string"; exit 1
+  }
+}
+
+# Invalid configuration files must be rejected with exit 2.
+$bad = New-TemporaryFile
+Set-Content $bad "schema_version = 1`nno_such_field = 3`n"
+& $exe --config $bad info 2>$null
+if ($LASTEXITCODE -ne 2) { Write-Error "bad config must exit 2"; exit 1 }
+Remove-Item $bad
+
+# Bench harness: percentiles over the real collector, few iterations.
+& "target/x86_64-pc-windows-msvc/release/ramshaper-bench.exe" observer-overhead --iterations 20 | Out-Null
+if ($LASTEXITCODE -ne 0) { Write-Error "observer-overhead failed"; exit 1 }
+
+# Session agent: version smoke (protocol behavior is covered by
+# cargo test's real-pipe integration tests).
+& "target/x86_64-pc-windows-msvc/release/ramshaper-agent.exe" --version
+if ($LASTEXITCODE -ne 0) { Write-Error "ramshaper-agent --version failed"; exit 1 }
