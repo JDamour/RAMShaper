@@ -3,11 +3,18 @@
 Implemented increments: the read-only CLI (RS-001 through RS-006, gate G0
 passed), the observation increment (RS-007 through RS-009 plus the Stage A
 measurement harness; G1 partially verified), the RS-030 session-agent/IPC
-slice (protocol v1 over a session-scoped named pipe), and the RS-010 Slint
-UI feasibility spike (an experimental, observe-only Overview window; not
-yet the G2 release UI). Open items and executed
-evidence: `docs/docs/16_IMPLEMENTATION_EVIDENCE.md`. There is no installer,
-policy actuation or managed launch in this build.
+slice (protocol v1 over a session-scoped named pipe), the four-page Slint
+UI (RS-010–013: Overview / Applications / Profiles / Actions, read-only
+over the agent's pipe), the consent-gated policy stage (RS-015–019,
+RS-031, RS-016–018 engines, G3 glue — the compatibility allowlist ships
+empty until Stage B evidence exists), the managed-launch track (RS-020–023,
+the `launch` command behind typed per-launch consent), `policies --dry-run
+[--trace]` and the `restore` wire client, and the Stage B benchmark
+machinery (RS-024; subject and trial binaries included). Open items and
+executed evidence: `docs/docs/16_IMPLEMENTATION_EVIDENCE.md`. There is no
+installer in this build; the release gates (G1 soak/cohorts, G3 sign-off,
+the launcher-crash lifecycle matrix, packaging/provenance RS-027) remain
+open — do not treat shipped code as released.
 
 ## Prerequisites (Windows x64)
 
@@ -92,6 +99,7 @@ observer baseline (RS-024 Stage A), not a hardware-cohort claim.
 
 ```text
 ramshaper-agent serve [--pipe-name <N>] [--interval-ms <MS>]   # Ctrl+C to stop
+ramshaper-agent serve --policy-journal <PATH>                  # + consent-gated policy stage
 ramshaper-agent probe [--pipe-name <N>] [--subscribe <SECS>] [--request <CMD>]
 ```
 
@@ -101,38 +109,58 @@ with an explicit DACL granting only the current user; every client is
 re-validated against the serving session and user SID. Frames are
 length-prefixed JSON capped at 1 MiB; subscribers hold at most two pending
 frames with gap markers. Commands: `GetCapabilities`, `GetSnapshot`,
-`SubscribeSnapshots`, `ListActions` (empty — observe only). Same-user malware
+`SubscribeSnapshots`, `GetConfig`, `GetProcesses`. Same-user malware
 is not isolated by these checks (documented limitation R-07).
 
-## UI spike (RS-010, experimental)
+Without `--policy-journal` the agent is strictly read-only: policy-stage
+commands answer `Unsupported` and `ListActions` reports no actions. With
+it, the pipe additionally serves `ListActions`, `PreviewAction`,
+`ConfirmAction`, `RestoreAction` and `DisableActions` — but previews and
+confirms stay refused until the operator types the exact word `ENABLE` on
+the agent console (a per-session consent: never a flag, a profile, a
+reconnect or an IPC command). Startup reconciliation of outstanding
+journal records runs before the pipe accepts; enabling requires the
+journal to be readable (recovery must have read and processed it), and a
+journal read failure is reported as a typed `JournalUnavailable` error —
+never as an empty action list or a clean zero-action disable.
+
+## Slint UI (RS-010–013)
 
 ```text
 ramshaper-agent serve --pipe-name rs010 --interval-ms 500
-ramshaper-ui --pipe-name rs010 [--poll-ms 1000]
+ramshaper-ui --pipe-name rs010 [--page overview|applications|profiles|actions] [--poll-ms 1000]
 ```
 
-A read-only Slint Overview window (`crates/ramshaper-ui`; slint pinned
-exactly `=1.18.1`, software renderer). Default transport is
-`SubscribeSnapshots`; `--poll-ms <MS>` switches to one-shot `GetSnapshot`
-probes at that cadence. The window renders live system resident-memory
-counters, the `pressure_v1` classification with pending evidence, the
-serving `agent_instance_id` (visible across agent restarts) and a
-last-updated/stale indicator; state transitions log to stderr. Mode is
-Observe Only — no policy controls. Known spike gaps recorded in
-`docs/docs/16_IMPLEMENTATION_EVIDENCE.md`: UIA exposes the window but no
-child controls (AT-19 blocker), and hidden windows keep updating
-(visibility-aware pausing is G2 work). Do not rebuild while a release
+A read-only Slint window (`crates/ramshaper-ui`; slint pinned
+exactly `=1.18.1`, software renderer) with four pages. Default transport is
+`SubscribeSnapshots`; `--poll-ms <MS>` switches to one-shot probes at that
+cadence. The Overview page renders live system resident-memory counters,
+the `pressure_v1` classification with pending evidence, the serving
+`agent_instance_id` (visible across agent restarts) and a
+last-updated/stale indicator; state transitions log to stderr. The Actions
+page lists the journal records the agent serves (`ListActions`) and offers
+only recovery-direction controls (restore one record, disable everything) —
+there is no apply or consent control in the UI; typed `ENABLE` stays on the
+agent console. Mode is Observe Only. Known gaps recorded in
+`docs/docs/16_IMPLEMENTATION_EVIDENCE.md`: the automated UIA inventory
+covers all four pages, and the interactive Narrator/DPI pass remains open.
+Hidden windows keep updating (visibility-aware pausing is G2 work). Do not
+rebuild while a release
 `ramshaper-ui.exe`/`ramshaper-agent.exe` is still running (MSVC link
 fails with os error 5 until the process exits).
 
 ## Scope and safety
 
-Implemented capabilities are strictly read-only: system memory counters, the
-low-memory resource condition, process identity, per-process memory/CPU/I-O
-counters, the `pressure_v1` observation classifier, bounded in-session history
-and versioned observe-only configuration. The tool never changes process
-settings, priorities, working sets or jobs, and it contains no network code, no
-telemetry and no update checks. See
+Read-only by default: system memory counters, the low-memory resource
+condition, process identity, per-process memory/CPU/I-O counters, the
+`pressure_v1` observation classifier, bounded in-session history
+and versioned observe-only configuration. Two narrowly gated exceptions
+exist and nothing else writes: the consent-gated policy stage changes
+exactly one CPU-priority class (`Normal → Below Normal`) on one confirmed,
+allowlisted process, journaled before the write and restored automatically;
+and the typed-consent `launch` command creates a fresh advisory Job Object
+for a process it starts itself (never attaching to an existing one). The
+tool contains no network code, no telemetry and no update checks. See
 `docs/docs/09_SECURITY_PRIVACY_AND_SAFETY.md`.
 
 Validation evidence is recorded in `docs/docs/16_IMPLEMENTATION_EVIDENCE.md`.

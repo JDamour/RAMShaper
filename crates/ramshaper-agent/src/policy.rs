@@ -57,6 +57,15 @@ pub struct PolicyGate {
     inner: Mutex<PolicyInner>,
 }
 
+/// Result of a successful [`PolicyGate::enable`]: what the immediately
+/// preceding recovery pass reconciled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EnableOutcome {
+    /// Unresolved records the pass read and drove to a journaled outcome
+    /// (terminal, or pending on the engine's bounded retry schedule).
+    pub reconciled: usize,
+}
+
 struct PolicyInner {
     coordinator: Coordinator,
     engine: RestoreEngine,
@@ -122,10 +131,37 @@ impl PolicyGate {
 
     /// Enable the policy session (the G3 consent flow calls this on the
     /// gate the agent was started with; startup is always disabled).
-    pub fn enable(&self) {
+    ///
+    /// Contract 14 §6: new actions are accepted only after recovery has
+    /// **successfully read and processed the journal** — so `enable` runs
+    /// one bounded recovery pass itself first and refuses when the journal
+    /// cannot be read. The refusal keeps the gate disabled, leaves the
+    /// durable records untouched, and does not affect the read-only
+    /// monitor; the caller reports the reason and the operator may retry
+    /// (each `enable` is one more bounded pass, never a busy loop).
+    ///
+    /// # Errors
+    /// A description string when the recovery pass could not read the
+    /// journal — the gate stays disabled and policy is not enabled.
+    pub fn enable(&self) -> Result<EnableOutcome, String> {
+        use ramshaper_core::clock::WallClock as _;
+        let now = ramshaper_core::SystemClock.unix_epoch_ms();
+        let mut loop_ = crate::policy_loop::PolicyLoop::new(
+            crate::policy_loop::PolicyLoopConfig { enabled: true },
+            self.journal_clone(),
+            WindowsPriorityActuator,
+        );
+        let reconciled = loop_.startup_recovery(now).map_err(|fault| {
+            format!(
+                "the action journal could not be read, so policy cannot be enabled \
+                 (the read-only monitor is unaffected and the durable recovery \
+                 records are preserved): {fault}"
+            )
+        })?;
         let mut inner = self.inner.lock().expect("policy lock");
         inner.coordinator.enable();
         inner.enabled = true;
+        Ok(EnableOutcome { reconciled })
     }
 
     /// Whether the gate accepts policy requests right now.
@@ -138,15 +174,23 @@ impl PolicyGate {
     /// pending/conflict set the UI must not miss), then the most recent
     /// history window, deduplicated by action ID. Bounded so a response
     /// can never approach the 1 MiB frame cap.
-    #[must_use]
-    pub fn list_actions(&self, history_limit: usize) -> serde_json::Value {
+    ///
+    /// # Errors
+    /// [`ramshaper_journal::JournalError`] when a journal query fails —
+    /// surfaced through the typed IPC error path (`JournalUnavailable`),
+    /// never reported as an empty action list (contract-14 audit: "no
+    /// records" and "could not read" are different outcomes).
+    pub fn list_actions(
+        &self,
+        history_limit: usize,
+    ) -> Result<serde_json::Value, ramshaper_journal::JournalError> {
         let inner = self.inner.lock().expect("policy lock");
-        let unresolved = inner.journal.unresolved().unwrap_or_default();
+        let unresolved = inner.journal.unresolved()?;
         let unresolved_ids: Vec<String> = unresolved
             .iter()
             .map(|r| r.intent.action_id.clone())
             .collect();
-        let history = inner.journal.recent(history_limit).unwrap_or_default();
+        let history = inner.journal.recent(history_limit)?;
         let mut rows: Vec<serde_json::Value> =
             unresolved.iter().map(|r| action_row(r, true)).collect();
         for record in &history {
@@ -154,11 +198,11 @@ impl PolicyGate {
                 rows.push(action_row(record, false));
             }
         }
-        serde_json::json!({
+        Ok(serde_json::json!({
             "actions": rows,
             "unresolved": unresolved.len(),
             "note": "records from the action journal; unresolved records need attention or a due restore",
-        })
+        }))
     }
 
     /// A clone of the gate's journal store for the restore-direction loop
@@ -450,6 +494,15 @@ impl PolicyGate {
     /// `DisableActions`: stop accepting new applies and restore everything
     /// outstanding now (contract 14 §6: stop accepting immediately on
     /// disable).
+    ///
+    /// Fail-safe order: revoking new-action authority and clearing pending
+    /// previews happen first (in-memory, cannot fail); the restoration
+    /// sweep follows. A journal enumeration failure is **not** a clean
+    /// zero-action success: the disable still took effect, but the sweep's
+    /// outcome is unknown, so the response is a typed `JournalUnavailable`
+    /// error saying so — the durable recovery records are left intact for
+    /// the next recovery pass (contract-14 audit; contract 14 §6 "storage
+    /// failure blocks new applies, not recovery").
     pub fn disable(&self, _request: &DisableActionsRequest, now_unix_ms: u64) -> ResponseData {
         let mut inner = self.inner.lock().expect("policy lock");
         let PolicyInner {
@@ -463,9 +516,24 @@ impl PolicyGate {
         } = &mut *inner;
         coordinator.disable();
         *enabled = false;
+        previewed.clear();
+        let records = match journal.unresolved() {
+            Ok(records) => records,
+            Err(error) => {
+                return ResponseData::error(
+                    ErrorCode::JournalUnavailable,
+                    format!(
+                        "DisableActions took effect (new actions refused, pending previews \
+                         cleared) but the action journal could not be read: {error}; the \
+                         restoration sweep could not run and its outcome is unknown; the \
+                         durable recovery records are preserved for the next recovery pass"
+                    ),
+                );
+            }
+        };
         let mut restored = 0u32;
         let mut unresolved = 0u32;
-        for record in journal.unresolved().unwrap_or_default() {
+        for record in records {
             let identity = ProcessIdentity::new(record.intent.pid, record.intent.creation_filetime);
             match engine.restore_once(
                 &*journal,
@@ -479,7 +547,6 @@ impl PolicyGate {
                 _ => unresolved += 1,
             }
         }
-        previewed.clear();
         ResponseData::ok(serde_json::json!({
             "disabled": true,
             "restored": restored,
@@ -601,5 +668,161 @@ fn restore_response(outcome: RestoreOutcome, action_id: &str) -> ResponseData {
         RestoreOutcome::StorageBlocked(reason) => {
             ResponseData::error(ErrorCode::JournalUnavailable, reason)
         }
+    }
+}
+
+#[cfg(test)]
+mod journal_read_failure_tests {
+    //! Contract-14 audit regressions: a journal READ failure must never be
+    //! observable as an empty journal, a completed recovery, a clean
+    //! zero-action disable, or a successful enable. Fault injection runs
+    //! through the journal store's documented test seam
+    //! (`JournalStore::set_read_fault`); clones share the armed state.
+
+    use super::*;
+    use ramshaper_core::eligibility::{Allowlist, SafetyClassification, ELIGIBILITY_RULES_VERSION};
+    use ramshaper_core::ipc::DisableActionsRequest;
+    use ramshaper_core::journal::{ActionIntent, Event, Property, ACTION_KIND_CPU_PRIORITY};
+    use ramshaper_journal::JournalStore;
+
+    fn gate_with(store: JournalStore) -> (PolicyGate, JournalStore) {
+        let arming_handle = store.clone();
+        let gate = PolicyGate::open_with_classification(
+            store,
+            Allowlist::new(ELIGIBILITY_RULES_VERSION, &[]),
+            Vec::new(),
+            Box::new(|_, _| SafetyClassification::VerifiedNonCritical),
+        );
+        (gate, arming_handle)
+    }
+
+    fn seed_applied(store: &JournalStore, action_id: &str) {
+        let intent = ActionIntent {
+            action_id: action_id.to_string(),
+            agent_instance_id: "agent".to_string(),
+            pid: 4242,
+            creation_filetime: 133_000_000_000_000_000,
+            target_name: "app.exe".to_string(),
+            property: Property {
+                kind: ACTION_KIND_CPU_PRIORITY,
+                original: Some(0x20),
+                desired: 0x4000,
+            },
+            consent_id: "c".to_string(),
+            rule_version: "policy_v1".to_string(),
+            ttl_ms: 120_000,
+            created_at_unix_ms: 1_000,
+        };
+        store.record_prepared(&intent).expect("prepare");
+        store.record_original(action_id, 0x20).expect("pin");
+        store
+            .transition(
+                action_id,
+                ActionState::Prepared,
+                &Event::ApplyVerified {
+                    deadline_unix_ms: 5_000,
+                },
+                2_000,
+                serde_json::json!({}),
+            )
+            .expect("apply");
+    }
+
+    #[test]
+    fn enable_with_an_unreadable_journal_refuses_and_stays_disabled() {
+        let store = JournalStore::open_in_memory().expect("in-memory journal");
+        seed_applied(&store, "act-1");
+        let (gate, journal) = gate_with(store);
+        journal.set_read_fault(Some("storage offline"));
+
+        let refusal = gate.enable().expect_err("enable must refuse");
+        assert!(
+            refusal.contains("journal could not be read"),
+            "the refusal names the unreadable journal: {refusal}"
+        );
+        assert!(
+            refusal.contains("read-only monitor is unaffected"),
+            "the refusal says the monitor stays available: {refusal}"
+        );
+        assert!(
+            !gate.enabled(),
+            "policy must NOT be enabled over an unreadable journal"
+        );
+
+        // One bounded retry per enable: disarming the fault lets the next
+        // explicit consent succeed, and the pre-enable pass reconciles the
+        // outstanding record this time.
+        journal.set_read_fault(None);
+        let outcome = gate.enable().expect("enable after the journal recovers");
+        assert!(gate.enabled());
+        assert_eq!(outcome.reconciled, 1, "the outstanding record");
+    }
+
+    #[test]
+    fn disable_with_an_unreadable_journal_is_an_explicit_failure_not_zero_success() {
+        let store = JournalStore::open_in_memory().expect("in-memory journal");
+        let (gate, journal) = gate_with(store);
+        // Enable over an empty journal first, so the seeded record below is
+        // still outstanding when disable runs (an enable over a seeded
+        // record would reconcile it before the fault is armed).
+        gate.enable().expect("healthy enable");
+        seed_applied(&gate.journal_clone(), "act-1");
+
+        journal.set_read_fault(Some("storage offline"));
+        let disabled = gate.disable(&DisableActionsRequest {}, 9_000);
+        match disabled {
+            ResponseData::Err { code, message, .. } => {
+                assert_eq!(code, ErrorCode::JournalUnavailable);
+                assert!(
+                    message.contains("took effect"),
+                    "the disable itself is still reported: {message}"
+                );
+                assert!(
+                    message.contains("outcome is unknown"),
+                    "the unknown sweep outcome is stated, never a clean zero: {message}"
+                );
+                assert!(
+                    message.contains("preserved"),
+                    "durable recovery records stay intact: {message}"
+                );
+            }
+            other => panic!("expected a typed failure, got {other:?}"),
+        }
+        // The fail-safe part still held: new-action authority is revoked.
+        assert!(!gate.enabled());
+
+        // And the durable record was not touched by the failed sweep: the
+        // next readable pass can still recover it.
+        journal.set_read_fault(None);
+        let record = gate
+            .journal_clone()
+            .get("act-1")
+            .expect("journal readable again")
+            .expect("record survives");
+        assert_eq!(
+            record.state,
+            ActionState::Applied,
+            "an unreadable sweep must not fake a restore"
+        );
+    }
+
+    #[test]
+    fn list_actions_with_an_unreadable_journal_is_an_error_never_an_empty_list() {
+        let store = JournalStore::open_in_memory().expect("in-memory journal");
+        seed_applied(&store, "act-1");
+        let (gate, journal) = gate_with(store);
+
+        journal.set_read_fault(Some("storage offline"));
+        let listed = gate.list_actions(50);
+        let error = listed.expect_err("the read failure must surface");
+        assert!(
+            error.to_string().contains("injected read fault"),
+            "the journal error is carried verbatim: {error}"
+        );
+
+        journal.set_read_fault(None);
+        let listed = gate.list_actions(50).expect("reads recover");
+        assert_eq!(listed["unresolved"], 1, "one outstanding record");
+        assert_eq!(listed["actions"].as_array().map(Vec::len), Some(1));
     }
 }

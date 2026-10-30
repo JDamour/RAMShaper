@@ -17,8 +17,8 @@
 use std::collections::HashMap;
 
 use ramshaper_core::coordinator::{
-    ActionJournal, ActuatorError, Coordinator, JournalSnapshot, PriorityActuator, RestoreEngine,
-    RestoreOutcome,
+    ActionJournal, ActuatorError, Coordinator, JournalFault, JournalSnapshot, PriorityActuator,
+    RestoreEngine, RestoreOutcome,
 };
 use ramshaper_core::guardrails::{evaluate, CompatibilityFinding, Decision, SafetyObservation};
 use ramshaper_core::identity::ProcessIdentity;
@@ -145,20 +145,37 @@ impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
     /// reconcile from the current value (never reapply); `Applied` records
     /// restore; `RestorePending` records restore. Returns how many records
     /// were resolved.
-    pub fn startup_recovery(&mut self, now_unix_ms: u64) -> usize {
+    ///
+    /// A journal READ failure is **not** an empty recovery set: the fault is
+    /// returned so the caller can never claim "the journal was read and
+    /// processed" when it was not (contract-14 audit: unreadable journal
+    /// blocks new actions, preserves the records, keeps recovery honest).
+    /// Restore attempts that land a journaled outcome on the engine's
+    /// bounded retry schedule count as processed — only the read is
+    /// required to succeed for recovery to be claimable.
+    ///
+    /// # Errors
+    /// The coordinator's [`JournalFault`] when the journal enumeration or a
+    /// record read fails — recovery cannot be claimed complete.
+    pub fn startup_recovery(&mut self, now_unix_ms: u64) -> Result<usize, JournalFault> {
         if !self.config.enabled {
-            return 0;
+            return Ok(0);
         }
-        let Ok(ids) = self.journal.unresolved_ids() else {
-            return 0;
-        };
+        let ids = self.journal.unresolved_ids()?;
         let mut resolved = 0;
         for action_id in ids {
-            let Some(snapshot) = self.journal.record_snapshot(&action_id).ok().flatten() else {
+            let Some(snapshot) = self.journal.record_snapshot(&action_id)? else {
+                // Listed unresolved but vanished before the read: it reached
+                // a terminal state (and was pruned) through another engine —
+                // resolved elsewhere, safe to skip.
                 continue;
             };
             let Some(intent) = snapshot.intent else {
-                continue;
+                // An unreadable record cannot be processed; claiming
+                // recovery complete over it would hide recovery intent.
+                return Err(JournalFault::Storage(format!(
+                    "unresolved record '{action_id}' carries no recorded intent"
+                )));
             };
             let identity = ProcessIdentity::new(intent.pid, intent.creation_filetime);
             let outcome = match snapshot.state {
@@ -185,7 +202,7 @@ impl<J: ActionJournal, A: PriorityActuator> PolicyLoop<J, A> {
                 self.stats.startup_reconciled += 1;
             }
         }
-        resolved
+        Ok(resolved)
     }
 
     /// Reconcile a `Prepared`/`Uncertain` record from reality (the AT-12
@@ -534,6 +551,11 @@ mod tests {
     #[derive(Default)]
     struct FakeJournal {
         records: RefCell<Vec<(ActionIntent, ActionState, Option<u64>)>>,
+        /// Read-fault injection (the audit seam's fake-side twin): when
+        /// armed, the journal enumeration or a record read fails —
+        /// startup recovery must report the fault, never an empty set.
+        fail_ids: RefCell<bool>,
+        fail_snapshots: RefCell<bool>,
     }
 
     impl FakeJournal {
@@ -572,6 +594,9 @@ mod tests {
             &self,
             action_id: &str,
         ) -> Result<Option<JournalSnapshot>, JournalFault> {
+            if *self.fail_snapshots.borrow() {
+                return Err(JournalFault::Storage("injected snapshot fault".into()));
+            }
             Ok(self
                 .records
                 .borrow()
@@ -584,6 +609,9 @@ mod tests {
                 }))
         }
         fn unresolved_ids(&self) -> Result<Vec<String>, JournalFault> {
+            if *self.fail_ids.borrow() {
+                return Err(JournalFault::Storage("injected enumeration fault".into()));
+            }
             Ok(self
                 .records
                 .borrow()
@@ -668,8 +696,50 @@ mod tests {
         );
         assert!(!loop_.observe_safety(&SafetyObservation::ForegroundReturned, 1_000,));
         loop_.tick(1_000_000);
-        assert_eq!(loop_.startup_recovery(1_000_000), 0);
+        assert_eq!(loop_.startup_recovery(1_000_000), Ok(0));
         assert_eq!(loop_.stats().restored, 0);
+    }
+
+    #[test]
+    fn startup_recovery_journal_read_failure_is_not_an_empty_success() {
+        // Contract-14 audit: an unreadable journal must not be reported as
+        // "recovered, zero outstanding". The fault propagates and the stats
+        // claim nothing.
+        let journal = FakeJournal::default();
+        journal.seed_applied(4242, 500);
+        *journal.fail_ids.borrow_mut() = true;
+        let mut loop_ = PolicyLoop::new(
+            PolicyLoopConfig { enabled: true },
+            journal,
+            FakeActuator::new(0x4000),
+        );
+        let outcome = loop_.startup_recovery(1_000);
+        assert!(
+            matches!(&outcome, Err(JournalFault::Storage(reason)) if reason.contains("enumeration")),
+            "the enumeration fault surfaces: {outcome:?}"
+        );
+        assert_eq!(loop_.stats().startup_reconciled, 0);
+        assert_eq!(loop_.stats().restored, 0, "nothing was restored");
+    }
+
+    #[test]
+    fn startup_recovery_record_read_failure_is_not_a_completed_pass() {
+        // The enumeration succeeded but a record cannot be read: recovery
+        // cannot be claimed complete over a record nobody looked at.
+        let journal = FakeJournal::default();
+        journal.seed_applied(4242, 500);
+        *journal.fail_snapshots.borrow_mut() = true;
+        let mut loop_ = PolicyLoop::new(
+            PolicyLoopConfig { enabled: true },
+            journal,
+            FakeActuator::new(0x4000),
+        );
+        let outcome = loop_.startup_recovery(1_000);
+        assert!(
+            matches!(&outcome, Err(JournalFault::Storage(reason)) if reason.contains("snapshot")),
+            "the record-read fault surfaces: {outcome:?}"
+        );
+        assert_eq!(loop_.stats().startup_reconciled, 0);
     }
 
     #[test]
@@ -682,7 +752,7 @@ mod tests {
             journal,
             FakeActuator::new(0x20),
         );
-        assert_eq!(loop_.startup_recovery(1_000), 1);
+        assert_eq!(loop_.startup_recovery(1_000), Ok(1));
         assert_eq!(loop_.stats().restored, 1);
         assert_eq!(loop_.stats().startup_reconciled, 1);
     }
@@ -697,7 +767,7 @@ mod tests {
             journal,
             FakeActuator::new(0x4000),
         );
-        assert_eq!(loop_.startup_recovery(1_000), 1);
+        assert_eq!(loop_.startup_recovery(1_000), Ok(1));
         assert_eq!(loop_.stats().restored, 1);
     }
 
@@ -917,7 +987,7 @@ mod tests {
         *actuator.transient_reads.borrow_mut() = u32::MAX;
         let mut loop_ = PolicyLoop::new(PolicyLoopConfig { enabled: true }, journal, actuator);
         let resolved = loop_.startup_recovery(1_000);
-        assert_eq!(resolved, 0, "an unreadable target cannot be resolved");
+        assert_eq!(resolved, Ok(0), "an unreadable target cannot be resolved");
         assert_eq!(
             loop_.outstanding_applied_identity(),
             None,

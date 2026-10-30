@@ -51,7 +51,8 @@ fn policy_gate_full_loop_applies_and_restores_a_spawned_child() {
     let pid = child.id();
     let identity = resolve_identity(pid).expect("fresh child identity");
     let gate = test_gate();
-    gate.enable();
+    gate.enable()
+        .expect("healthy journal: the pre-enable recovery pass succeeds");
     assert!(gate.enabled());
 
     // Preview: offered under fresh Elevated pressure with the tested
@@ -165,7 +166,8 @@ fn untested_third_party_targets_are_denied_with_the_full_report() {
             }
         }),
     );
-    gate.enable();
+    gate.enable()
+        .expect("healthy journal: the pre-enable recovery pass succeeds");
 
     let preview = gate.preview(
         &PreviewActionRequest {
@@ -235,7 +237,8 @@ fn disable_drains_outstanding_actions_and_blocks_new_previews() {
     let pid = child.id();
     let identity = resolve_identity(pid).expect("fresh child identity");
     let gate = test_gate();
-    gate.enable();
+    gate.enable()
+        .expect("healthy journal: the pre-enable recovery pass succeeds");
 
     gate.preview(
         &PreviewActionRequest {
@@ -304,7 +307,8 @@ fn disable_drains_outstanding_actions_and_blocks_new_previews() {
 #[test]
 fn restore_of_an_unknown_id_is_an_explained_refusal() {
     let gate = test_gate();
-    gate.enable();
+    gate.enable()
+        .expect("healthy journal: the pre-enable recovery pass succeeds");
     let restore = gate.restore(
         &RestoreActionRequest {
             action_id: "no-such-action".to_string(),
@@ -339,7 +343,8 @@ fn stopping_the_agent_runs_the_clean_exit_trigger() {
     let pid = child.id();
     let identity = resolve_identity(pid).expect("fresh child identity");
     let gate = std::sync::Arc::new(test_gate());
-    gate.enable();
+    gate.enable()
+        .expect("healthy journal: the pre-enable recovery pass succeeds");
 
     let stop = Arc::new(ManualResetEvent::new().expect("stop event"));
     let handle = serve(
@@ -490,7 +495,8 @@ fn ttl_expiry_restores_through_the_live_ticker() {
     let pid = child.id();
     let identity = resolve_identity(pid).expect("fresh child identity");
     let gate = Arc::new(test_gate());
-    gate.enable();
+    gate.enable()
+        .expect("healthy journal: the pre-enable recovery pass succeeds");
 
     let stop = Arc::new(ManualResetEvent::new().expect("stop event"));
     let handle = serve(
@@ -576,7 +582,8 @@ fn child_spawned_after_apply_is_inherited_then_trips_the_restore() {
     let pid = parent.id();
     let identity = resolve_identity(pid).expect("fresh parent identity");
     let gate = Arc::new(test_gate_allowing(&["POWERSHELL.EXE"]));
-    gate.enable();
+    gate.enable()
+        .expect("healthy journal: the pre-enable recovery pass succeeds");
 
     let stop = Arc::new(ManualResetEvent::new().expect("stop event"));
     let handle = serve(

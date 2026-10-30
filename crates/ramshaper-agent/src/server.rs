@@ -335,8 +335,21 @@ pub fn serve(
             gate.journal_clone(),
             ramshaper_windows::priority::WindowsPriorityActuator,
         );
-        let resolved = loop_.startup_recovery(ramshaper_core::SystemClock.unix_epoch_ms());
-        eprintln!("state=startup_recovery resolved={resolved}");
+        // A journal read failure here is NOT "zero records resolved": the
+        // outcome is reported as the unknown state it is. The read-only
+        // monitor and the ticker continue regardless (the ticker re-reads
+        // the journal once per cadence — a bounded 1 Hz poll, never a busy
+        // loop); the gate's own consent-time `enable` re-runs the pass and
+        // refuses while the journal is unreadable.
+        match loop_.startup_recovery(ramshaper_core::SystemClock.unix_epoch_ms()) {
+            Ok(resolved) => eprintln!("state=startup_recovery resolved={resolved}"),
+            Err(fault) => eprintln!(
+                "state=startup_recovery FAILED: the action journal could not be read ({fault}); \
+                 outstanding recovery is UNKNOWN and the durable records are preserved; policy \
+                 stays disabled (the read-only monitor is unaffected; consent will refuse to \
+                 enable until the journal is readable)"
+            ),
+        }
 
         let ticker_stop = Arc::clone(&stop);
         let ticker_shared = Arc::clone(&shared);

@@ -1,0 +1,40 @@
+ramshaper-agent — RAMShaper session agent (read-only monitor + consent-gated policy stage)
+
+USAGE:
+    ramshaper-agent serve [--pipe-name <NAME>] [--interval-ms <MS>] [--config <PATH>]
+                          [--policy-journal <PATH>]
+    ramshaper-agent probe [--pipe-name <NAME>] [--subscribe <SECONDS>] [--request <CMD>]
+
+COMMANDS:
+    serve    Run the agent until Ctrl+C (collector + named-pipe server)
+    probe    Connect as a protocol client: capabilities, one snapshot, and
+             optionally a timed subscription stream
+
+OPTIONS:
+    --pipe-name <NAME>   Pipe name override (default: derived from the
+                         logon session: \\.\pipe\ramshaper-agent-s<sid>-v1)
+    --interval-ms <MS>   Collector cadence for serve (default 1000)
+    --subscribe <SECS>   probe: stream snapshots for this many seconds
+    --request <CMD>      probe: send this command instead of GetSnapshot
+    --config <PATH>      TOML configuration (schema_version 1, observe-only)
+    --policy-journal <PATH>
+                         serve: open the policy gate over this SQLite action
+                         journal (no default location). The gate starts
+                         DISABLED; startup recovery reconciles outstanding
+                         records before the pipe accepts; the operator must
+                         type ENABLE on the agent console to allow actions
+                         for THIS session (end of input is a decline)
+    --version, -V        Print version
+    --help, -h           Print this help
+
+POLICY STAGE:
+    Without --policy-journal the agent is strictly read-only: policy-stage
+    commands answer Unsupported and ListActions reports no actions. With it
+    the pipe serves ListActions, PreviewAction, ConfirmAction, RestoreAction
+    and DisableActions, but previews and confirms stay refused until the
+    exact word ENABLE is typed on the agent console (a per-session consent:
+    never a flag, a profile, a reconnect or an IPC command). Enable requires
+    the action journal to be readable — recovery must have read and
+    processed it first; DisableActions always revokes new-action authority
+    and clears pending previews, then restores every outstanding record, and
+    a journal read failure is reported as such, never as an empty result.

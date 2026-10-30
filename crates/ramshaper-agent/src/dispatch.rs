@@ -147,11 +147,18 @@ pub fn dispatch(envelope: &RequestEnvelope, context: &DispatchContext<'_>) -> Re
             json!({ "subscribed": true, "protocol_version": PROTOCOL_VERSION }),
         ),
         COMMAND_LIST_ACTIONS => match context.policy {
-            Some(gate) => Response::ok(
-                &envelope.request_id,
-                context.instance_id,
-                gate.list_actions(ACTIONS_HISTORY_LIMIT),
-            ),
+            // A journal read failure is a typed error, never an empty list
+            // (contract 14 §7's JournalUnavailable exists for exactly this:
+            // "no records" and "could not read" are different outcomes).
+            Some(gate) => match gate.list_actions(ACTIONS_HISTORY_LIMIT) {
+                Ok(data) => Response::ok(&envelope.request_id, context.instance_id, data),
+                Err(error) => Response::error(
+                    &envelope.request_id,
+                    context.instance_id,
+                    ErrorCode::JournalUnavailable,
+                    format!("the action journal could not be read: {error}"),
+                ),
+            },
             None => Response::ok(
                 &envelope.request_id,
                 context.instance_id,
@@ -430,6 +437,42 @@ mod policy_dispatch_tests {
         assert_eq!(actions[0]["desired"], 0x4000);
         assert_eq!(actions[0]["unresolved"], true, "Applied is outstanding");
         assert_eq!(data["unresolved"], 1, "one outstanding record");
+    }
+
+    #[test]
+    fn list_actions_journal_read_failure_is_a_typed_error_not_an_empty_list() {
+        // Contract-14 audit: "the journal could not be read" must reach the
+        // client as JournalUnavailable, never as a healthy empty action
+        // list. Fault injection through the journal store's test seam;
+        // clones share the armed state.
+        use crate::policy::PolicyGate;
+        use ramshaper_core::eligibility::{
+            Allowlist, SafetyClassification, ELIGIBILITY_RULES_VERSION,
+        };
+        use ramshaper_core::ipc::COMMAND_LIST_ACTIONS;
+        use ramshaper_journal::JournalStore;
+
+        let store = JournalStore::open_in_memory().expect("journal");
+        let arming_handle = store.clone();
+        let gate = PolicyGate::open_with_classification(
+            store,
+            Allowlist::new(ELIGIBILITY_RULES_VERSION, &[]),
+            Vec::new(),
+            Box::new(|_, _| SafetyClassification::VerifiedNonCritical),
+        );
+        arming_handle.set_read_fault(Some("storage offline"));
+
+        let mut ctx = ctx();
+        ctx.policy = Some(&gate);
+        let response = dispatch(&envelope(1, COMMAND_LIST_ACTIONS), &ctx);
+        assert!(!response.ok, "a failed read must not report success");
+        let error = response.error.expect("typed error");
+        assert_eq!(error.code, ErrorCode::JournalUnavailable);
+        assert!(
+            error.message.contains("could not be read"),
+            "the failure is explained: {}",
+            error.message
+        );
     }
 
     #[test]

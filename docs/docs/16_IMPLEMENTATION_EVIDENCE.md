@@ -2978,3 +2978,90 @@ at the 0.3.61 head:
 - Remaining honest caveat: local Windows is not the GitHub runner —
   the certification de-risks but cannot guarantee the hosted run.
   The moment billing is fixed, the next push is expected green.
+
+---
+
+# Journal read-failure safety (contract-14 audit follow-up), 2026-10-30
+
+Audit finding: journal READ errors could masquerade as an empty record
+set in the policy paths — `PolicyLoop::startup_recovery` returned `0` on
+an enumeration failure, `PolicyGate::enable` enabled unconditionally,
+`PolicyGate::disable` swept `unresolved().unwrap_or_default()` and
+reported a clean zero-action summary, and `PolicyGate::list_actions`
+swallowed read errors into an empty list. "The journal has no unresolved
+records" and "the journal could not be read" were indistinguishable,
+which could skip recovery, allow a later `ENABLE` over unrecovered
+state, or show the user a false empty state (contract 14 §6/§7;
+doc 09: an unsupported/corrupt journal blocks new actions and is
+preserved).
+
+**What changed (all six files the audit named):**
+
+- `ramshaper-journal`: `JournalStore::set_read_fault` — a documented
+  testing affordance (like the existing `set_fault_page_cap`) that arms
+  a shared read-fault state across clones; every read entry point
+  (`get`/`recent`/`unresolved`/`counts`/the coordinator trait's
+  `unresolved_ids`) fails typed while armed; writes are unaffected so
+  recovery can still commit. A real-world read failure (disk error,
+  corrupt page) takes the same `Err` paths.
+- `policy_loop::startup_recovery` now returns
+  `Result<usize, JournalFault>`: an enumeration or record-read failure
+  propagates instead of returning "resolved 0"; an unresolved record
+  whose intent is unreadable fails the pass (recovery cannot be claimed
+  complete over it). Startup failure at agent start is logged as
+  `startup_recovery FAILED … outstanding recovery is UNKNOWN` and the
+  read-only monitor/ticker continue.
+- `PolicyGate::enable` runs one bounded recovery pass first and
+  **refuses** (stays disabled, reason reported) unless the journal was
+  successfully read and processed; the operator may retry by consenting
+  again (each enable is one more bounded pass, never a busy loop). The
+  consent path in `main.rs` reports the refusal verbatim.
+- `PolicyGate::disable` keeps the fail-safe order (revoke new-action
+  authority + clear pending previews first, in-memory) and then sweeps;
+  if the journal cannot be enumerated it returns a typed
+  `JournalUnavailable` error stating the disable took effect, the sweep
+  outcome is unknown and the durable records are preserved — never a
+  clean zero-action success. The clean-exit shutdown trigger surfaces
+  the same failure honestly ("clean-exit restoration failed:
+  JournalUnavailable: …") instead of implying all-restored.
+- `PolicyGate::list_actions` → `Result<…, JournalError>`;
+  `dispatch` maps the failure to the typed `JournalUnavailable` IPC
+  error (contract 14 §7's code exists for exactly this). No empty list.
+- Unchanged by design: restore outcomes, bounded 1 s/5 s/30 s retries,
+  conflict preservation, crash reconciliation, the compatibility
+  allowlist, consent rules, and the IPC envelope contract.
+
+**Regression tests (7 new; fault injection through the journal seam, no
+OS writes):**
+
+```text
+ramshaper-journal  read_fault_tests::armed_read_fault_fails_reads_not_writes_and_disarms_cleanly
+ramshaper-agent    policy_loop::tests::startup_recovery_journal_read_failure_is_not_an_empty_success
+ramshaper-agent    policy_loop::tests::startup_recovery_record_read_failure_is_not_a_completed_pass
+ramshaper-agent    policy::journal_read_failure_tests::enable_with_an_unreadable_journal_refuses_and_stays_disabled
+ramshaper-agent    policy::journal_read_failure_tests::disable_with_an_unreadable_journal_is_an_explicit_failure_not_zero_success
+ramshaper-agent    policy::journal_read_failure_tests::list_actions_with_an_unreadable_journal_is_an_error_never_an_empty_list
+ramshaper-agent    dispatch::policy_dispatch_tests::list_actions_journal_read_failure_is_a_typed_error_not_an_empty_list
+```
+
+The nine pre-existing `gate.enable()` call sites (agent/CLI tests) were
+updated to expect success on a healthy in-memory journal — the recovery
+pass is now part of every enable.
+
+**Verification (commands and outcomes in
+`docs/evidence/2026-10-30-journal-read-fault-audit/`):**
+`cargo fmt --all -- --check` exit 0; `cargo check --workspace
+--all-targets --locked` clean; `cargo clippy --workspace --all-targets
+--locked -- -D warnings` clean; `cargo test --workspace --locked --
+--test-threads=1` (the CI serial form) **454 passed / 0 failed** (447
+pre-existing + 7 new); `cargo build --release --target
+x86_64-pc-windows-msvc --locked` clean.
+
+**Not in this slice (recorded, not hidden):** the fault seam injects at
+the journal API boundary — a genuine OS-level SQLite read failure is
+exercised through the same `Err` paths but not bit-for-bit (the seam is
+the accepted pattern from `set_fault_page_cap`); the UI's
+"records unavailable" rendering is covered by the existing
+`apply_actions` behavior and not by a new UI-side test; no ADR added
+(the design follows the existing fault-injection precedent and contract
+14 §6/§7 as written).

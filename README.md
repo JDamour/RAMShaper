@@ -75,6 +75,7 @@ ramshaper-agent serve --policy-journal <PATH>
                                    #   reconciliation runs; the operator may type
                                    #   ENABLE on that console to allow confirmed
                                    #   CPU-priority actions for THIS session only
+                                   #   (enable requires a readable action journal)
 ramshaper-agent probe              # one-shot pipe client for manual checks
 
 ramshaper-ui --page overview|applications|profiles|actions
@@ -91,7 +92,8 @@ telemetry, consent, journal, recovery and IPC behavior. The
 requirements to tickets and observable tests. Architecture decisions are
 recorded in [doc 13](docs/docs/13_ARCHITECTURAL_DECISIONS.md).
 
-Documentation revision: **0.3.55, October 29, 2026** (managed-launch
-track, `launch` command, `policies --trace`, Stage B trial machinery and
-gate verdicts documented; RS-028 maintenance). See the
+Documentation revision: **0.3.64, October 30, 2026** (policy-journal
+read-failure safety: enable gated on successful recovery, typed
+`JournalUnavailable` for `ListActions`/disable sweep failures, honest
+startup/shutdown reporting; help + BUILDING/FAQ/doc-06 sync). See the
 [documentation changelog](docs/CHANGELOG.md).

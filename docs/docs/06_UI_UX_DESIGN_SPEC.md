@@ -92,7 +92,20 @@ Consent: one confirmed action for this process identity and agent instance
 Applied: below-normal priority for up to 120 seconds
 Actual result: success
 Reverted: 11:42:48 (target became foreground)
-``` 
+```
+
+Shipped status (RS-013, reconciled with the G3 boundary 2026-10-30): the
+Actions page renders the agent's `ListActions` records read-only (state,
+target, deadline, pending/history badge) and offers **recovery-direction
+controls only** — restore one record (`RestoreAction`) and disable
+everything (`DisableActions`). There is no apply, preview or consent
+control in the UI: the typed `ENABLE` consent stays on the agent console
+until G3 sign-off adds a reviewed UI consent flow. Safe-recovery behavior
+is preserved exactly as specified under "UI states and errors": a journal
+read failure renders as an explicit "records unavailable" state (never an
+empty list implying nothing is pending), pending/unresolved records stay
+visible with a count, and "All restored" is never displayed while
+unresolved records remain.
 
 ### S07 First-run onboarding
 

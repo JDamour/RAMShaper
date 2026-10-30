@@ -20,7 +20,7 @@
 //!   callers can "continue observation, disable new actions" (contract 14).
 
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use ramshaper_core::journal::{
     transition, ActionIntent, ActionState, Event, JOURNAL_SCHEMA_VERSION,
@@ -138,10 +138,12 @@ pub enum Recorded {
 }
 
 /// SQLite-backed action journal. Cheap to clone (connection behind a
-/// mutex); all methods serialize through it.
+/// mutex); all methods serialize through it. Clones share the read-fault
+/// injection state, like they share the connection.
 #[derive(Clone)]
 pub struct JournalStore {
     conn: std::sync::Arc<Mutex<Connection>>,
+    read_fault: Arc<Mutex<Option<String>>>,
 }
 
 impl std::fmt::Debug for JournalStore {
@@ -193,6 +195,7 @@ impl JournalStore {
             .map_err(|e| JournalError::classify(&e))?;
         let store = Self {
             conn: std::sync::Arc::new(Mutex::new(conn)),
+            read_fault: Arc::new(Mutex::new(None)),
         };
         store.validate_schema()?;
         Ok(store)
@@ -203,9 +206,33 @@ impl JournalStore {
         let conn = Connection::open_in_memory().map_err(|e| JournalError::classify(&e))?;
         let store = Self {
             conn: std::sync::Arc::new(Mutex::new(conn)),
+            read_fault: Arc::new(Mutex::new(None)),
         };
         store.validate_schema()?;
         Ok(store)
+    }
+
+    /// Deterministic read-fault injection for the contract-14 audit
+    /// regression tests: a journal READ failure must never be observable as
+    /// an empty journal or a completed recovery. While armed, every read
+    /// entry point (`unresolved`, `recent`, `get`, `counts`, and the
+    /// coordinator trait's `unresolved_ids`/`record_snapshot`) fails with
+    /// [`JournalError::Db`]; writes are unaffected. `None` disarms.
+    /// Testing affordance only, like [`JournalStore::set_fault_page_cap`].
+    pub fn set_read_fault(&self, reason: Option<&str>) {
+        let mut guard = self.read_fault.lock().expect("journal fault lock");
+        *guard = reason.map(str::to_string);
+    }
+
+    /// Fail the caller when a read fault is armed.
+    fn read_gate(&self) -> Result<(), JournalError> {
+        let guard = self.read_fault.lock().expect("journal fault lock");
+        match guard.as_deref() {
+            Some(reason) => Err(JournalError::Db(format!(
+                "injected read fault (test seam): {reason}"
+            ))),
+            None => Ok(()),
+        }
     }
 
     fn validate_schema(&self) -> Result<(), JournalError> {
@@ -275,6 +302,7 @@ impl JournalStore {
     /// serving for `ListActions`): unresolved records are not duplicated
     /// here by the caller's merge — this query is the history window.
     pub fn recent(&self, limit: usize) -> Result<Vec<JournalRecord>, JournalError> {
+        self.read_gate()?;
         let conn = self.conn.lock().expect("journal lock");
         let mut stmt = conn
             .prepare(
@@ -378,12 +406,14 @@ impl JournalStore {
 
     /// One record by action ID, if present.
     pub fn get(&self, action_id: &str) -> Result<Option<JournalRecord>, JournalError> {
+        self.read_gate()?;
         let conn = self.conn.lock().expect("journal lock");
         read_one(&conn, action_id)
     }
 
     /// All unresolved (pinned) records — the recovery set.
     pub fn unresolved(&self) -> Result<Vec<JournalRecord>, JournalError> {
+        self.read_gate()?;
         let conn = self.conn.lock().expect("journal lock");
         let mut stmt = conn
             .prepare("SELECT * FROM actions ORDER BY created_at_unix_ms, action_id")
@@ -398,6 +428,7 @@ impl JournalStore {
 
     /// Counts for the quota decision: (total, pinned).
     pub fn counts(&self) -> Result<(usize, usize), JournalError> {
+        self.read_gate()?;
         let conn = self.conn.lock().expect("journal lock");
         let mut stmt = conn
             .prepare("SELECT * FROM actions")
@@ -554,6 +585,7 @@ impl ramshaper_core::coordinator::ActionJournal for JournalStore {
     }
 
     fn unresolved_ids(&self) -> Result<Vec<String>, ramshaper_core::coordinator::JournalFault> {
+        self.read_gate().map_err(fault_of)?;
         let conn = self.conn.lock().expect("journal lock");
         let mut stmt = conn
             .prepare(
@@ -680,4 +712,59 @@ fn row_to_record(row: &rusqlite::Row<'_>) -> Result<JournalRecord, rusqlite::Err
             .map(|v| v as u64),
         evidence: serde_json::from_str(&evidence_json).unwrap_or(serde_json::Value::Null),
     })
+}
+
+#[cfg(test)]
+mod read_fault_tests {
+    use super::*;
+
+    #[test]
+    fn armed_read_fault_fails_reads_not_writes_and_disarms_cleanly() {
+        let store = JournalStore::open_in_memory().expect("in-memory journal");
+        let intent = ActionIntent {
+            action_id: "act-1".to_string(),
+            agent_instance_id: "agent".to_string(),
+            pid: 4242,
+            creation_filetime: 133_000,
+            target_name: "app.exe".to_string(),
+            property: ramshaper_core::journal::Property {
+                kind: ramshaper_core::journal::ACTION_KIND_CPU_PRIORITY,
+                original: Some(0x20),
+                desired: 0x4000,
+            },
+            consent_id: "c".to_string(),
+            rule_version: "policy_v1".to_string(),
+            ttl_ms: 1_000,
+            created_at_unix_ms: 1,
+        };
+        store.record_prepared(&intent).expect("write while unarmed");
+
+        store.set_read_fault(Some("storage offline"));
+        assert!(
+            store.get("act-1").is_err(),
+            "get must fail while the read fault is armed"
+        );
+        assert!(store.recent(10).is_err(), "recent must fail");
+        assert!(store.unresolved().is_err(), "unresolved must fail");
+        assert!(
+            ramshaper_core::coordinator::ActionJournal::unresolved_ids(&store).is_err(),
+            "the coordinator read must fail"
+        );
+        // A clone shares the fault (it shares the connection too).
+        let clone = store.clone();
+        assert!(clone.get("act-1").is_err(), "clones share the fault state");
+        // Writes are unaffected: the disable/recovery paths must still be
+        // able to commit while reads are broken.
+        store
+            .record_prepared(&{
+                let mut second = intent.clone();
+                second.action_id = "act-2".to_string();
+                second
+            })
+            .expect("writes still work while reads fault");
+
+        store.set_read_fault(None);
+        assert!(store.get("act-1").is_ok(), "disarm restores reads");
+        assert_eq!(store.unresolved().expect("unresolved").len(), 2);
+    }
 }

@@ -3,9 +3,11 @@
 //! `ramshaper-agent serve` runs the read-only monitor behind a
 //! session-scoped named pipe until Ctrl+C. `ramshaper-agent probe` is a
 //! protocol client used for evidence and by the future UI as a reference.
-//! The agent performs no process mutation and contains no network code:
-//! the named pipe is a local machine object with an explicit user-only
-//! DACL (contract 14 §7).
+//! Without `--policy-journal` the agent performs no process mutation and
+//! contains no network code: the named pipe is a local machine object with
+//! an explicit user-only DACL (contract 14 §7). With it, the consent-gated
+//! policy stage adds exactly one journaled, automatically-restored
+//! confirmed action (Normal → Below Normal) — never anything else.
 
 #![deny(unsafe_code)]
 
@@ -17,10 +19,11 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const TOOL_NAME: &str = "ramshaper-agent";
 
 const HELP: &str = "\
-ramshaper-agent — RAMShaper session agent (read-only, current user)
+ramshaper-agent — RAMShaper session agent (read-only monitor + consent-gated policy stage)
 
 USAGE:
     ramshaper-agent serve [--pipe-name <NAME>] [--interval-ms <MS>] [--config <PATH>]
+                          [--policy-journal <PATH>]
     ramshaper-agent probe [--pipe-name <NAME>] [--subscribe <SECONDS>] [--request <CMD>]
 
 COMMANDS:
@@ -35,11 +38,27 @@ OPTIONS:
     --subscribe <SECS>   probe: stream snapshots for this many seconds
     --request <CMD>      probe: send this command instead of GetSnapshot
     --config <PATH>      TOML configuration (schema_version 1, observe-only)
+    --policy-journal <PATH>
+                         serve: open the policy gate over this SQLite action
+                         journal (no default location). The gate starts
+                         DISABLED; startup recovery reconciles outstanding
+                         records before the pipe accepts; the operator must
+                         type ENABLE on the agent console to allow actions
+                         for THIS session (end of input is a decline)
     --version, -V        Print version
     --help, -h           Print this help
 
-The agent is strictly read-only: no policy commands exist in this build
-(ListActions always returns an empty list).
+POLICY STAGE:
+    Without --policy-journal the agent is strictly read-only: policy-stage
+    commands answer Unsupported and ListActions reports no actions. With it
+    the pipe serves ListActions, PreviewAction, ConfirmAction, RestoreAction
+    and DisableActions, but previews and confirms stay refused until the
+    exact word ENABLE is typed on the agent console (a per-session consent:
+    never a flag, a profile, a reconnect or an IPC command). Enable requires
+    the action journal to be readable — recovery must have read and
+    processed it first; DisableActions always revokes new-action authority
+    and clears pending previews, then restores every outstanding record, and
+    a journal read failure is reported as such, never as an empty result.
 ";
 
 #[derive(Debug, PartialEq)]
@@ -338,10 +357,17 @@ fn serve_command(
                     Err(_) => false,
                 };
                 if consented {
-                    gate.enable();
-                    eprintln!(
-                        "policy session enabled (this session only; DisableActions or stopping the agent restores everything outstanding)"
-                    );
+                    match gate.enable() {
+                        Ok(outcome) => eprintln!(
+                            "policy session enabled (this session only; {} record(s) reconciled \
+                             by the pre-enable recovery pass; DisableActions or stopping the \
+                             agent restores everything outstanding)",
+                            outcome.reconciled
+                        ),
+                        Err(reason) => {
+                            eprintln!("policy stays Observe Only despite the consent: {reason}")
+                        }
+                    }
                 } else {
                     eprintln!("no consent given; the session stays Observe Only");
                 }

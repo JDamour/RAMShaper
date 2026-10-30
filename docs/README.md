@@ -1,6 +1,6 @@
 # RAMShaper — Project Documentation
 
-**Revision:** 0.3.36 • **Updated:** October 26, 2026  
+**Revision:** 0.3.64 • **Updated:** October 30, 2026  
 **Status:** read-only CLI (**G0 passed**); observation increment (**G1 partially verified**: AT-06 deterministic, AT-07, AT-08 core/config Passed — the 24-hour soak and declared 4/8/16 GiB cohorts remain open); session agent + IPC (RS-030); read-only Slint UI (Overview / Applications / Profiles / Actions, RS-010–013 slices; interactive accessibility pass open); **policy stage code-complete behind typed session consent** (RS-015–019, RS-031, RS-016–018 engines, G3 glue — the compatibility allowlist ships empty until Stage B evidence exists); managed-launch spike (RS-020); benchmark harness with the Stage B runner (RS-024). Executed evidence for every claim: [16](docs/16_IMPLEMENTATION_EVIDENCE.md).  
 **Direction:** Rust + Slint UI; Windows x64 first  
 **Name/license:** working name; project license and distribution review remain open

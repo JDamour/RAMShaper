@@ -65,6 +65,16 @@ is never persisted, never derivable from a config file or profile, and
 never grantable over the pipe. Closing stdin or typing anything else
 leaves the session read-only.
 
+Typing `ENABLE` also requires the action journal to be readable: policy
+cannot be enabled until the pending recovery records have actually been
+read and processed. If the journal cannot be read (storage failure, a
+newer or damaged file), the agent says so and stays Observe Only — the
+read-only monitor keeps working and the journal file is preserved. The
+same honesty applies on disable: new actions stop and pending previews
+are cleared immediately, and if the journal could not be read for the
+restoration sweep, the agent reports the outcome as unknown instead of
+claiming a clean all-restored.
+
 A profile preset or an imported configuration is *not* consent. Neither
 is having consented yesterday.
 

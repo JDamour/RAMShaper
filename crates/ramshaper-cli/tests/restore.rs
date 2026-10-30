@@ -63,7 +63,8 @@ fn serve_test_gate(
             }
         }),
     ));
-    gate.enable();
+    gate.enable()
+        .expect("healthy journal: the pre-enable recovery pass succeeds");
     let stop = Arc::new(ManualResetEvent::new().expect("stop event"));
     let handle = serve(
         Arc::clone(&stop),
