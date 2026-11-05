@@ -3479,7 +3479,9 @@ dependencies = [
 name = "ramshaper-cli"
 version = "0.1.0"
 dependencies = [
+ "ramshaper-agent",
  "ramshaper-core",
+ "ramshaper-journal",
  "ramshaper-platform",
  "ramshaper-windows",
  "serde",

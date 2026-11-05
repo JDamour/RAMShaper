@@ -1,0 +1,4 @@
+auto-stop after 480000 ms
+watching low-memory condition every 1000 ms; press Ctrl+C to stop
+watch cancelled after 480 snapshot(s); handles released
+history: 480 stored, 0 gap(s), 0 evicted, 0 expired, 0 rejected
