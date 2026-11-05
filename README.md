@@ -92,8 +92,21 @@ telemetry, consent, journal, recovery and IPC behavior. The
 requirements to tickets and observable tests. Architecture decisions are
 recorded in [doc 13](docs/docs/13_ARCHITECTURAL_DECISIONS.md).
 
-Documentation revision: **0.3.64, October 30, 2026** (policy-journal
-read-failure safety: enable gated on successful recovery, typed
-`JournalUnavailable` for `ListActions`/disable sweep failures, honest
-startup/shutdown reporting; help + BUILDING/FAQ/doc-06 sync). See the
+## License
+
+The RAMShaper source is licensed under the [Apache License, Version
+2.0](LICENSE) (copyright 2026 JDamour). Apache-2.0 follows the core
+recommendation in doc 10 and the [Slint license
+memo](docs/design/2026-10-24-slint-license-memo.md): it is compatible
+with all three runtime options for the [Slint](https://slint.dev) UI
+toolkit (GPL-3.0, Slint Royalty-Free Desktop License 2.0, Commercial),
+so that still-open choice stays open, and it carries an explicit patent
+grant. A source-only repository triggers no Slint obligation; picking
+the Slint runtime option and honoring its attribution term (an
+`AboutSlint` widget) are owner actions required before any binary
+distribution.
+
+Documentation revision: **0.3.65, November 5, 2026** (license added:
+LICENSE + workspace manifest license fields + ADR-046; Slint runtime
+option deliberately deferred to first binary distribution). See the
 [documentation changelog](docs/CHANGELOG.md).

@@ -907,3 +907,33 @@ actual mid-creation interruption traces need rig work. The per-launch
 consent means automation cannot batch launches silently — a deliberate
 cost. If a future UI grants launch consent interactively, that is a new
 decision (this ADR covers the typed console path only).
+
+## ADR-046: The project's own code is Apache-2.0; the Slint runtime option is picked at first binary distribution — Accepted (2026-11-05)
+
+**Context:** the repository became public in November 2026 and needed a
+license. Doc 10 already recommends Apache-2.0 for the core, and the
+Slint license memo (2026-10-24) verified Apache-2.0 is compatible with
+all three Slint runtime options (GPL-3.0, Royalty-Free Desktop 2.0,
+Commercial). ADR-045 stays reserved for the owner's trial-subject
+allowlist decision (Stage B runbook P1), so this decision takes the
+next free number.
+
+**Decisions:**
+- The LICENSE file at the repo root is the canonical Apache-2.0 text
+  (copyright 2026 JDamour); every workspace manifest declares
+  `license = "Apache-2.0"` via the workspace package table, so the
+  metadata is machine-readable.
+- The Slint runtime option is deliberately NOT chosen here. A
+  source-only repository triggers no Slint obligation. The attribution
+  term of the recommended Royalty-Free Desktop option (an AboutSlint
+  widget in an About screen, or a badge on a public download page) and
+  the runtime-option pick itself are owner actions required before any
+  binary distribution, per the memo's comparison table.
+
+**Consequences:** anyone may use, modify and redistribute the source
+under Apache-2.0's terms, including its explicit patent grant —
+relevant for a tool that manipulates process priority through Win32
+APIs. Building and distributing binaries with the UI crate keeps the
+Slint decision open but not free: whichever runtime option is chosen
+then governs the combined work's distribution terms. No code, test or
+behavior changed in this slice.
